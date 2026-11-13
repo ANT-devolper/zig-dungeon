@@ -542,7 +542,10 @@ pub const Game = struct {
                     .wall => '#',
                     .floor => '.',
                     .gold => '$',
-                    .stairs => '>',
+                    .stairs => blk: {
+                        color = ansi_yellow; // the goal stands out
+                        break :blk '>';
+                    },
                 };
                 if (opts.color and !opts.flash and color != null) {
                     try w.print("{s}{c}{s}", .{ color.?, c, ansi_reset });
@@ -896,6 +899,18 @@ test "color render paints the hurt hero red and shows the damage" {
     try testing.expect(std.mem.indexOf(u8, out, ansi_cyan ++ "@") == null);
     try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ "M") != null);
     try testing.expect(std.mem.indexOf(u8, out, "(-1 HP)") != null);
+}
+
+test "color render highlights the stairs in yellow" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ ">" ++ ansi_reset) != null);
+    // Without color the stairs are plain text.
+    const plain = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOfScalar(u8, plain, 0x1b) == null);
+    try testing.expect(std.mem.indexOfScalar(u8, plain, '>') != null);
 }
 
 test "color render highlights the hero in cyan" {

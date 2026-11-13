@@ -60,7 +60,7 @@ Type a command and press **Enter**:
 | `@`    | you, the hero (cyan; red when hurt) |
 | `M`    | monster            |
 | `$`    | gold (+10)         |
-| `>`    | stairs             |
+| `>`    | stairs, your goal (yellow) |
 | `#`    | wall               |
 
 ### Rules
