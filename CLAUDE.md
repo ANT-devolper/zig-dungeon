@@ -26,6 +26,8 @@ zig fmt --check src/ build.zig   # formatting check (zig fmt src/ build.zig to f
 zig build run                    # build and play
 zig build                        # build zig-out/bin/dungeon(.exe)
 zig build -Doptimize=ReleaseFast # optimized build
+zig build run -- --mute          # play without sound
+zig build -Dtarget=x86_64-linux  # cross-compile check (sound is a no-op off Windows)
 ```
 
 Smoke test without a terminal (pipe commands into stdin):
@@ -39,16 +41,18 @@ printf "d\nd\ns\nq\n" | ./zig-out/bin/dungeon.exe
 ```
 build.zig       module "dungeon" (src/root.zig) + executable "dungeon" (src/main.zig)
 build.zig.zon   package manifest (package name `.zig` is tied to the fingerprint; leave it)
-src/root.zig    pure game logic + all tests
-src/main.zig    entry point: I/O loop and the strike/hit animations
+src/root.zig    pure game logic + its tests (also pulls in sound.zig's tests)
+src/sound.zig   sound synthesizer (pure, tested) + PlaySoundA playback (Windows only)
+src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --mute
 ```
 
 - **`src/root.zig` does no I/O.** It holds the map, turns, monster AI and rendering. `Game.render(w, RenderOptions)` writes to any `*std.Io.Writer`, which is what makes the logic testable without a terminal. Keep new game logic here.
 - **`src/main.zig` is a thin shell.** It seeds the RNG, then loops: draw a frame, read a line, call `parseCommand`, call `Game.step`. Then it plays the turn's effects in turn order. If `game.hit_pos != null`, `playStrikeEffect` blinks a spark over the monster the hero hit (`*` if wounded, `X` if killed). If `game.damage_taken > 0`, `playHitEffect` runs the red flash and screen shake.
-- **Per-turn effect state** (`damage_taken`, `hit_pos`, `hit_killed`, `Monster.bit`) is reset at the start of `Game.step`. The renderer reads it, and `RenderOptions` (`color`, `flash`, `shake`, `spark`) chooses how each frame looks.
+- **Per-turn effect state** (`damage_taken`, `hit_pos`, `hit_killed`, `events`, `Monster.bit`) is reset at the start of `Game.step`. The renderer reads it, and `RenderOptions` (`color`, `flash`, `shake`, `spark`) chooses how each frame looks.
 - **No allocations.** The map is `[H][W]Tile` and monsters live in a fixed array (`max_monsters`). Keep it that way unless a feature really needs dynamic memory.
 - **Levels** are string literals in `levels`. A `comptime` block checks that every row is exactly `W` wide. A test runs a BFS on each level to check that the start can reach the stairs, so new levels are covered automatically.
 - **Randomness** goes through `Game.rng`. In tests, build the game with `testGame(&prng, layout)` and a fixed seed. Test layouts can place `M` and `$` directly, so nothing in them is random.
+- **Sound** (`src/sound.zig`): `synth` writes 8-bit mono 22050 Hz WAV files from `Note` lists (square or noise, linear pitch sweep, linear fade-out). Each `Sfx` defines its notes. `Bank.init` synthesizes them all once. `play` calls `PlaySoundA(SND_MEMORY | SND_ASYNC)` from winmm.dll on Windows and does nothing elsewhere; the `extern "winmm"` declaration links the DLL by itself. Async playback reads straight from the bank's buffers, so the bank is a global that must outlive playback. A new sound cuts off the previous one. `main.zig` triggers sounds from `Game.events`, `hit_pos`/`hit_killed` and `damage_taken`, and waits about 900 ms after the ending jingle.
 - **Rendering:** `RenderOptions{}` (the default) produces plain text with no ANSI codes. Colors, flash and shake are opt-in. The screen is cleared with ANSI `\x1b[2J\x1b[H`.
 
 ## Conventions
@@ -62,6 +66,7 @@ src/main.zig    entry point: I/O loop and the strike/hit animations
 
 ## Gotchas
 
+- 0.17 renamed or removed some builtins and std helpers. `zig fmt` rewrites `@intFromEnum` to `@backingInt`, and `std.meta.fields` is a compile error (use `@typeInfo` or `std.enums.values(E)`). Run `zig fmt` after writing code.
 - The array repetition operator `**` no longer compiles in 0.17. Use `@splat`, e.g. `var seen: [H][W]bool = @splat(@splat(false));`.
 - On Windows, `zig build` fails at the "install" step if `dungeon.exe` is running. Close the game and build again.
 - Lines read from stdin on Windows end with `\r`. `parseCommand` trims it, so keep that in mind for any new input parsing.

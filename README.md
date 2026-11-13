@@ -73,13 +73,24 @@ Type a command and press **Enter**:
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).
 - Take the stairs on level 3 and you **win**. If your HP reaches 0, you **lose**.
 
+## Sound
+
+On Windows the game plays retro sound effects for strikes, kills, damage, gold, stairs, victory and defeat. They are synthesized in code (square waves, noise and pitch sweeps) into in-memory WAV files, so there are no audio assets or libraries. On other systems the game is silent.
+
+To play without sound:
+
+```sh
+zig build run -- --mute
+./zig-out/bin/dungeon --mute
+```
+
 ## Tests
 
 ```sh
 zig build test --summary all
 ```
 
-The tests cover command parsing, movement, combat, monster AI, level changes, winning and losing, and the visual effects (strike spark, colors, flash and shake). One test checks that every level has a path from the start to the stairs.
+The tests cover command parsing, movement, combat, monster AI, level changes, winning and losing, the visual effects (strike spark, colors, flash and shake), and the sound synthesizer (WAV header, durations, fade-out and deterministic noise). One test checks that every level has a path from the start to the stairs.
 
 ## Project layout
 
@@ -87,7 +98,8 @@ The tests cover command parsing, movement, combat, monster AI, level changes, wi
 build.zig       build script (run and test steps)
 build.zig.zon   package manifest
 src/root.zig    pure game logic (map, turns, monsters, rendering) and its tests
-src/main.zig    entry point: input/output loop
+src/sound.zig   sound effect synthesizer (in-memory WAV) and Windows playback
+src/main.zig    entry point: input/output loop, animations and sound
 ```
 
 The game logic in `src/root.zig` does no I/O. It renders to any `std.Io.Writer`, so it can be tested without a terminal.

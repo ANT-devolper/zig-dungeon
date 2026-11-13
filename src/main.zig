@@ -1,9 +1,21 @@
 const std = @import("std");
 const Io = std.Io;
 const dungeon = @import("dungeon");
+const sound = dungeon.sound;
+
+/// All synthesized sound effects. Global because it is large and because
+/// sounds play asynchronously straight from these buffers.
+var bank: sound.Bank = undefined;
+var muted = false;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
+
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--mute")) muted = true;
+    }
+    if (!muted) bank.init();
 
     // Random seed from the operating system.
     var seed_bytes: [8]u8 = undefined;
@@ -26,9 +38,17 @@ pub fn main(init: std.process.Init) !void {
         const line = try in.takeDelimiter('\n') orelse break; // EOF (Ctrl+Z / end of pipe)
         if (dungeon.parseCommand(line)) |cmd| {
             game.step(cmd);
+            if (game.events.gold) playSfx(.gold);
+            if (game.events.stairs) playSfx(.stairs);
             // Same order as the turn: the hero's strike, then the monsters' bites.
-            if (game.hit_pos != null) try playStrikeEffect(io, out, &game);
-            if (game.damage_taken > 0) try playHitEffect(io, out, &game);
+            if (game.hit_pos != null) {
+                playSfx(if (game.hit_killed) .kill else .strike);
+                try playStrikeEffect(io, out, &game);
+            }
+            if (game.damage_taken > 0) {
+                playSfx(.hurt);
+                try playHitEffect(io, out, &game);
+            }
         } else {
             game.message = "Invalid command. Use w/a/s/d, . or q.";
         }
@@ -37,6 +57,21 @@ pub fn main(init: std.process.Init) !void {
     try drawFrame(out, &game, .{ .color = true });
     try out.print("\nFinal score: {d} gold, level {d}.\n", .{ game.gold, game.level });
     try out.flush();
+
+    // Ending jingle. Wait for it, or it is cut off when the process exits.
+    const ending: ?sound.Sfx = switch (game.state) {
+        .won => .won,
+        .lost => .lost,
+        else => null,
+    };
+    if (ending) |sfx| {
+        playSfx(sfx);
+        if (!muted) try io.sleep(Io.Duration.fromMilliseconds(900), .awake);
+    }
+}
+
+fn playSfx(sfx: sound.Sfx) void {
+    if (!muted) sound.play(bank.get(sfx));
 }
 
 /// Clears the screen and draws one frame.

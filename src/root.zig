@@ -1,6 +1,8 @@
 //! Dungeon: pure game logic (no I/O), so it is easy to test.
 const std = @import("std");
 
+pub const sound = @import("sound.zig");
+
 pub const W = 30;
 pub const H = 12;
 pub const max_monsters = 8;
@@ -79,6 +81,15 @@ pub const Command = enum {
 };
 
 pub const State = enum { playing, won, lost, quit };
+
+/// Things that happened during the last turn (used for sound effects).
+/// Strikes and damage are tracked by `hit_pos`, `hit_killed` and `damage_taken`.
+pub const Events = struct {
+    gold: bool = false,
+    stairs: bool = false,
+    won: bool = false,
+    lost: bool = false,
+};
 
 /// Turns a typed line into a command. Ignores spaces and the Windows '\r'.
 pub fn parseCommand(line: []const u8) ?Command {
@@ -168,6 +179,7 @@ pub const Game = struct {
     hit_pos: ?Pos = null,
     /// Whether that attack killed the monster.
     hit_killed: bool = false,
+    events: Events = .{},
     rng: std.Random,
 
     /// Starts a new game on level 1, with random monsters and gold.
@@ -263,6 +275,7 @@ pub const Game = struct {
         g.damage_taken = 0;
         g.hit_pos = null;
         g.hit_killed = false;
+        g.events = .{};
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
 
         switch (cmd) {
@@ -293,6 +306,7 @@ pub const Game = struct {
                     .gold => {
                         g.hero = target;
                         g.gold += gold_value;
+                        g.events.gold = true;
                         g.map[@intCast(target.y)][@intCast(target.x)] = .floor;
                         g.message = "You picked up gold!";
                     },
@@ -300,9 +314,11 @@ pub const Game = struct {
                         if (g.level == last_level) {
                             g.hero = target;
                             g.state = .won;
+                            g.events.won = true;
                             g.message = "You escaped the dungeon! VICTORY!";
                         } else {
                             g.loadLevel(g.level + 1);
+                            g.events.stairs = true;
                             g.message = "You go down the stairs...";
                         }
                         return; // new level: monsters do not act this turn
@@ -325,6 +341,7 @@ pub const Game = struct {
                 if (g.hp <= 0) {
                     g.hp = 0;
                     g.state = .lost;
+                    g.events.lost = true;
                     g.message = "You died. GAME OVER.";
                     return;
                 }
@@ -702,6 +719,41 @@ test "color spark uses its own highlight" {
     var buf: [4096]u8 = undefined;
     const out = try renderToBuf(&g, &buf, .{ .spark = true, .color = true });
     try testing.expect(std.mem.indexOf(u8, out, ansi_spark ++ "*" ++ ansi_reset) != null);
+}
+
+test "turn events: gold, stairs, won and lost" {
+    var prng = std.Random.DefaultPrng.init(1);
+
+    var g = testGame(&prng, test_layout);
+    g.step(.up);
+    try testing.expectEqual(Events{ .gold = true }, g.events);
+
+    g = testGame(&prng, test_layout);
+    g.step(.down);
+    try testing.expectEqual(Events{ .stairs = true }, g.events);
+
+    g = testGame(&prng, test_layout);
+    g.level = last_level;
+    g.step(.down);
+    try testing.expectEqual(Events{ .won = true }, g.events);
+
+    g = testGame(&prng, test_layout);
+    g.hp = 1;
+    g.step(.wait);
+    try testing.expectEqual(Events{ .lost = true }, g.events);
+}
+
+test "events are cleared on the next turn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.up); // gold
+    g.step(.left); // empty floor
+    try testing.expectEqual(Events{}, g.events);
+}
+
+// Pull in the tests of the other source files.
+test {
+    _ = sound;
 }
 
 test "shake shifts the map rows" {
