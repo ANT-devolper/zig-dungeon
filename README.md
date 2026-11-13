@@ -6,16 +6,16 @@ A small turn-based dungeon crawler for the terminal, written in [Zig](https://zi
 DUNGEON  Level 1/3   HP 10/10   Gold 0
 
 ##############################
-#.@$.....#$..................#
-#...$....#.......#####.......#
-#..M.....#.......#...#.......#
-#$........M..........#.......#
-#........#.......#...#.......#
-######.###......M#.###.......#
-#........#...................#
-#........#.........#######...#
-#........#.........#.........#
-#..................#........>#
+#...........#.......#>#.....##
+#########.#.#.###M#.#.#.###.##
+#........@........#.#M..#...##
+#.#############.#.#.#####.#.##
+#.#$#...............#...#...##
+#.#.#####.#######.###.#.#.#.##
+#.#.....#.#.......#$..#.....##
+#.#####.#.#.###.#.###.#####.##
+#.......#....$#......M#$....##
+##############################
 ##############################
 
 Find the stairs (>)! Beware of the monsters (M).
@@ -71,6 +71,7 @@ Type a command and press **Enter**:
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster turns yellow.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).
+- Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and gold tends to hide in dead ends.
 - Take the stairs on level 3 and you **win**. If your HP reaches 0, you **lose**.
 
 ## Sound

@@ -4,7 +4,7 @@ Guidance for working in this repository.
 
 ## Project
 
-`zig-dungeon` is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) moves through 3 hand-made ASCII levels, fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is line-based: a key and then Enter. See `README.md` for the player-facing rules.
+`zig-dungeon` is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) moves through 3 randomly generated ASCII mazes, fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is line-based: a key and then Enter. See `README.md` for the player-facing rules.
 
 ## Toolchain
 
@@ -50,7 +50,11 @@ src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --
 - **`src/main.zig` is a thin shell.** It seeds the RNG, then loops: draw a frame, read a line, call `parseCommand`, call `Game.step`. Then it plays the turn's effects in turn order. If `game.hit_pos != null`, `playStrikeEffect` blinks a spark over the monster the hero hit (`*` if wounded, `X` if killed). If `game.damage_taken > 0`, `playHitEffect` runs the red flash and screen shake.
 - **Per-turn effect state** (`damage_taken`, `hit_pos`, `hit_killed`, `events`, `Monster.bit`) is reset at the start of `Game.step`. The renderer reads it, and `RenderOptions` (`color`, `flash`, `shake`, `spark`) chooses how each frame looks.
 - **No allocations.** The map is `[H][W]Tile` and monsters live in a fixed array (`max_monsters`). Keep it that way unless a feature really needs dynamic memory.
-- **Levels** are string literals in `levels`. A `comptime` block checks that every row is exactly `W` wide. A test runs a BFS on each level to check that the start can reach the stairs, so new levels are covered automatically.
+- **Levels are generated mazes.** `Game.generateLevel` retries `tryGenerateLevel` until the result is good:
+  1. `carveMaze` builds a perfect maze with a recursive backtracker (fixed-size stack, no allocations). Maze cells sit on odd coordinates (`cellTile`), so there are 14×5 cells. Because 30×12 is even, column `W-2` and row `H-2` stay wall, which gives a double border on the right and at the bottom. The user chose to keep this instead of resizing to 31×13.
+  2. `carveShortcuts` opens `maze_loops` (8) extra walls between cells, creating loops. It only ever adds paths, so all floor stays connected and **the stairs are always reachable**. It never opens (even, even) tiles, so corridors stay one tile wide.
+  3. The hero starts on a random cell. The stairs go on the floor tile farthest from the hero (`distanceMap`, a BFS), at least `min_stairs_distance` steps away. `spawnGold` prefers dead ends (`isDeadEnd`). Monsters spawn at random with `spawnMonsters`.
+- **Level tests:** `"generated mazes are always valid and finishable"` checks every level of 500 seeds with `expectValidLevel`: borders, a single reachable stairs tile, connectivity, one-tile corridors and spawns. Other tests cover gold in dead ends and the shortcut count. Keep them passing when you change the generator. `Layout` and `loadLayout` exist only for hand-drawn test maps.
 - **Randomness** goes through `Game.rng`. In tests, build the game with `testGame(&prng, layout)` and a fixed seed. Test layouts can place `M` and `$` directly, so nothing in them is random.
 - **Sound** (`src/sound.zig`): `synth` writes 8-bit mono 22050 Hz WAV files from `Note` lists (square or noise, linear pitch sweep, linear fade-out). Each `Sfx` defines its notes. `Bank.init` synthesizes them all once. `play` calls `PlaySoundA(SND_MEMORY | SND_ASYNC)` from winmm.dll on Windows and does nothing elsewhere; the `extern "winmm"` declaration links the DLL by itself. Async playback reads straight from the bank's buffers, so the bank is a global that must outlive playback. A new sound cuts off the previous one. `main.zig` triggers sounds from `Game.events`, `hit_pos`/`hit_killed` and `damage_taken`, and waits about 900 ms after the ending jingle.
 - **Rendering:** `RenderOptions{}` (the default) produces plain text with no ANSI codes. Colors, flash and shake are opt-in. The screen is cleared with ANSI `\x1b[2J\x1b[H`.
