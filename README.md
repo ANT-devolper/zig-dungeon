@@ -19,8 +19,7 @@ DUNGEON  Level 1/3   HP 10/10   Gold 0
 ##############################
 
 Find the stairs (>)! Beware of the monsters (M).
-[w/a/s/d] move  [.] wait  [q] quit  + Enter
->
+[w/a/s/d] move  [.] wait  [i] inventory  [q] quit
 ```
 
 ## Requirements
@@ -44,7 +43,7 @@ zig build -Doptimize=ReleaseFast  # optimized build
 
 ## How to play
 
-Type a command and press **Enter**:
+Press a key. It acts at once, with no need to press **Enter**:
 
 | Key | Action     |
 |-----|------------|
@@ -53,7 +52,7 @@ Type a command and press **Enter**:
 | `a` | move left  |
 | `d` | move right |
 | `.` | wait       |
-| `i` | open the inventory (does not use a turn; Enter closes it) |
+| `i` | open the inventory (does not use a turn; any key other than a number closes it) |
 | `1`-`9` | use the item with that number in the inventory (uses a turn), from the inventory or the map |
 | `q` | quit       |
 

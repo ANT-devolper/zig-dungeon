@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`zig-dungeon` is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) moves through 3 randomly generated ASCII mazes, fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is line-based: a key and then Enter. See `README.md` for the player-facing rules.
+`zig-dungeon` is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) moves through 3 randomly generated ASCII mazes, fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is one key at a time: every key press acts at once, with no Enter. See `README.md` for the player-facing rules.
 
 ## Toolchain
 
@@ -13,7 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - APIs verified for 0.17 and used here:
   - `pub fn main(init: std.process.Init) !void`, using `init.io`
   - stdout: `var fw: std.Io.File.Writer = .init(.stdout(), io, &buf);`, then `&fw.interface` and `flush()`
-  - stdin: `var fr: std.Io.File.Reader = .init(.stdin(), io, &buf);`, then `fr.interface.takeDelimiter('\n')`, which returns `?[]u8` (`null` means EOF)
+  - stdin: `var fr: std.Io.File.Reader = .init(.stdin(), io, &buf);`, then `fr.interface.takeByte()` (`error.EndOfStream` means EOF) or `takeDelimiter('\n')`, which returns `?[]u8` (`null` means EOF)
+  - std 0.17 has no `SetConsoleMode`; `src/term.zig` declares it with `extern "kernel32"`. POSIX uses `std.posix.tcgetattr`/`tcsetattr`
   - random seed: `io.random(&bytes)`, then `std.Random.DefaultPrng.init(u64)`
   - sleep: `io.sleep(std.Io.Duration.fromMilliseconds(n), .awake)`
   - in-memory writer for tests: `var w: std.Io.Writer = .fixed(&buf);`, then `w.buffered()`
@@ -46,10 +47,11 @@ build.zig.zon   package manifest (package name `.zig` is tied to the fingerprint
 src/root.zig    pure game logic + its tests (also pulls in sound.zig's tests)
 src/sound.zig   sound synthesizer (pure, tested) + PlaySoundA playback (Windows only)
 src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --mute
+src/term.zig    raw stdin mode (one key at a time, no echo) for Windows and POSIX
 ```
 
 - **`src/root.zig` does no I/O.** It holds the map, turns, monster AI and rendering. `Game.render(w, RenderOptions)` writes to any `*std.Io.Writer`, which is what makes the logic testable without a terminal. Keep new game logic here.
-- **`src/main.zig` is a thin shell.** It seeds the RNG, then loops: draw a frame, read a line, call `parseCommand`, call `Game.step`. Then it plays the turn's effects in turn order. If `game.hit_pos != null`, `playStrikeEffect` blinks a spark over the monster the hero hit (`*` if wounded, `X` if killed). If `game.damage_taken > 0`, `playHitEffect` runs the red flash and screen shake.
+- **`src/main.zig` is a thin shell.** It seeds the RNG and turns on `term.RawMode` (restored by `defer` on exit; does nothing when stdin is not a console), then loops: draw a frame, read one key with `readKey`, call `parseCommand(&.{key})`, call `Game.step`. `readKey` skips `\n`, so a redirected file with one command per line still works. In a raw console Enter is `\r` (POSIX clears `ICRNL` to match): ignored on the map, and like any other non-number key it closes the inventory. Then it plays the turn's effects in turn order. If `game.hit_pos != null`, `playStrikeEffect` blinks a spark over the monster the hero hit (`*` if wounded, `X` if killed). If `game.damage_taken > 0`, `playHitEffect` runs the red flash and screen shake.
 - **Field of view** (`Game.visibility`): the hero sees tiles within `view_radius` (5, a rounded circle `dx²+dy² <= r²+r`) when a Bresenham line in either direction crosses no wall between the two ends (`lineIsClear`). The wall that blocks the view is visible. With `RenderOptions.fov`, tiles out of sight are drawn as plain `#` or `.` in light gray (`ansi_dim`, 256-color 248), which hides monsters, gold and the stairs. There is no memory of tiles already seen. `main.zig`'s `drawFrame` always turns `fov` on, while tests render without it unless they set it. The user chose all of these behaviors (radius 5, walls block, the stairs hide too, dimmed maze instead of blank).
 - **Inventory:** `Game.inventory` (`Inventory` struct) holds what the hero carries: `gold` (the score), `potions[Potion.count]` (counts indexed by `Potion.index()`) and `slots`/`slot_count`, the usable items **in pick-up order**. Numbers are positions, not fixed per kind (a user rule): `add` appends a kind the hero did not have, and `remove` drops a kind that runs out and shifts the rest up, so the numbers are always 1..n with no gaps. Always go through `add`/`remove`, never write `potions` directly, or `slots` gets out of sync. `renderInventory` lists only what the hero has (zero gold hidden), shows "(empty)" when there is nothing, and offers `[1-n] use`. Keys `1`-`9` parse to `Command.use_1..use_9` (`Command.slot()` gives the 0-based slot). They work from the map too, and a number with no item uses no turn. The `i` key (`Command.inventory`) is a pause screen: `main.zig` draws `renderInventory` and reads one line. A number runs `step(.use_N)` plus `afterTurn` (sounds and animations); anything else closes the screen **without** calling `Game.step`. `step(.inventory)` is a no-op as a safety net.
 - **Potions** (`Potion`: small +1, medium +3, large +5 HP, plus `time_stop`): a chest has a `chest_potion_chance` (85%) chance to hold one **instead of gold, never both** (a user rule). The potion is `time_stop` with `time_stop_chance` (10%). Otherwise it is a health potion size from `Potion.fromRoll` (50/35/15), which never returns `time_stop`, because **time stop is a single kind with no sizes** (a user rule). The result is stored in `Game.chest_potion` (or `Game.chest_gold`) for that turn. `Game.drink` caps healing at `max_hp` and records `Game.healed`. For a health potion it returns false (no turn: `step` returns before `monstersTurn`) when HP is already full. `render` appends "(<label>)" or "(+N gold)", and "(+N HP)". Use `Potion.label()` for names, not `@tagName`.
@@ -85,5 +87,5 @@ src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --
 - 0.17 renamed or removed some builtins and std helpers. `zig fmt` rewrites `@intFromEnum` to `@backingInt`, and `std.meta.fields` is a compile error (use `@typeInfo` or `std.enums.values(E)`). Run `zig fmt` after writing code.
 - The array repetition operator `**` no longer compiles in 0.17. Use `@splat`, e.g. `var seen: [H][W]bool = @splat(@splat(false));`.
 - On Windows, `zig build` fails at the "install" step if `dungeon.exe` is running. Close the game and build again.
-- Lines read from stdin on Windows end with `\r`. `parseCommand` trims it, so keep that in mind for any new input parsing.
+- Lines from a redirected file on Windows may end with `\r\n`. `parseCommand` trims `\r` and the map loop skips whitespace keys, so keep that in mind for any new input parsing.
 - The default branch is `main` and the remote is `origin` (GitHub). Push authentication is set up per machine in local git config. Do not change the global git config.

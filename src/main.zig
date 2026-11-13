@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const dungeon = @import("dungeon");
 const sound = dungeon.sound;
+const term = @import("term.zig");
 
 /// All synthesized sound effects. Global because it is large and because
 /// sounds play asynchronously straight from these buffers.
@@ -16,6 +17,10 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "--mute")) muted = true;
     }
     if (!muted) bank.init();
+
+    // Read each key as it is pressed, without Enter and without echo.
+    const raw = term.RawMode.enable();
+    defer raw.restore();
 
     // Random seed from the operating system.
     var seed_bytes: [8]u8 = undefined;
@@ -35,16 +40,18 @@ pub fn main(init: std.process.Init) !void {
     while (game.state == .playing) {
         try drawFrame(out, &game, .{ .color = true });
 
-        const line = try in.takeDelimiter('\n') orelse break; // EOF (Ctrl+Z / end of pipe)
-        if (dungeon.parseCommand(line)) |cmd| {
+        const key = try readKey(in) orelse break; // EOF (Ctrl+Z / end of file)
+        // Enter, space and tab do nothing on the map.
+        if (std.ascii.isWhitespace(key)) continue;
+        if (dungeon.parseCommand(&.{key})) |cmd| {
             if (cmd == .inventory) {
                 // A pause screen: looking uses no turn. A number uses that item
-                // (which does use a turn); anything else just closes it.
+                // (which does use a turn); any other key just closes it.
                 try out.writeAll("\x1b[2J\x1b[H");
                 try game.renderInventory(out, true);
                 try out.flush();
-                const choice = try in.takeDelimiter('\n') orelse break;
-                if (dungeon.parseCommand(choice)) |c| {
+                const choice = try readKey(in) orelse break;
+                if (dungeon.parseCommand(&.{choice})) |c| {
                     if (c.slot() != null) {
                         game.step(c);
                         try afterTurn(io, out, &game);
@@ -72,6 +79,19 @@ pub fn main(init: std.process.Init) !void {
     if (ending) |sfx| {
         playSfx(sfx);
         if (!muted) try io.sleep(Io.Duration.fromMilliseconds(900), .awake);
+    }
+}
+
+/// Reads one key press. Skips '\n', which only comes from redirected input
+/// (a file with one command per line); Enter in a raw console is '\r'.
+/// Returns null at the end of the input.
+fn readKey(in: *Io.Reader) !?u8 {
+    while (true) {
+        const b = in.takeByte() catch |err| switch (err) {
+            error.EndOfStream => return null,
+            else => |e| return e,
+        };
+        if (b != '\n') return b;
     }
 }
 

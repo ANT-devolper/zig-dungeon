@@ -996,7 +996,7 @@ pub const Game = struct {
         }
         try w.writeByte('\n');
         if (g.state == .playing) {
-            try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [q] quit  + Enter\n> ");
+            try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [q] quit\n");
         }
     }
 
@@ -1054,7 +1054,7 @@ pub const Game = struct {
         } else if (items.len > 1) {
             try w.print("[1-{d}] use (uses a turn)   ", .{items.len});
         }
-        try w.writeAll("[Enter] close\n> ");
+        try w.writeAll("[other key] close\n");
     }
 
     /// A quantity in the inventory, green when colors are on.
@@ -1111,6 +1111,22 @@ test "parseCommand handles keys, uppercase and \\r" {
     try testing.expectEqual(Command.inventory, parseCommand("I\r").?);
     try testing.expectEqual(@as(?Command, null), parseCommand(""));
     try testing.expectEqual(@as(?Command, null), parseCommand("x"));
+}
+
+test "a single key acts at once, so the screens never ask for Enter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    // Each key is one command on its own, with no line ending.
+    for ("wasd.qi19") |key| try testing.expect(parseCommand(&.{key}) != null);
+
+    var buf: [4096]u8 = undefined;
+    const map = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, map, "Enter") == null);
+    try testing.expect(std.mem.indexOf(u8, map, "[q] quit\n") != null);
+
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "Enter") == null);
 }
 
 test "wall blocks the hero" {
@@ -1279,7 +1295,7 @@ test "inventory screen lists the gold" {
     const plain = w.buffered();
     try testing.expect(std.mem.indexOf(u8, plain, "INVENTORY") != null);
     try testing.expect(std.mem.indexOf(u8, plain, "Gold ................... 30") != null);
-    try testing.expect(std.mem.indexOf(u8, plain, "[Enter] close") != null);
+    try testing.expect(std.mem.indexOf(u8, plain, "[other key] close") != null);
     try testing.expect(std.mem.indexOfScalar(u8, plain, 0x1b) == null);
 
     var cw: std.Io.Writer = .fixed(&buf);
