@@ -59,6 +59,7 @@ const ansi_reset = "\x1b[0m";
 const ansi_red = "\x1b[1;31m";
 const ansi_yellow = "\x1b[1;33m";
 const ansi_cyan = "\x1b[1;36m";
+const ansi_bite = "\x1b[1;37;41m"; // white on red: the monster that just bit
 const ansi_red_bg = "\x1b[41m";
 const ansi_spark = "\x1b[1;37;45m";
 
@@ -536,7 +537,7 @@ pub const Game = struct {
                     color = if (hurt) ansi_red else ansi_cyan;
                     break :blk '@';
                 } else if (g.monsterAt(p)) |i| blk: {
-                    if (g.monsters[i].bit) color = ansi_yellow;
+                    color = if (g.monsters[i].bit) ansi_bite else ansi_red;
                     break :blk 'M';
                 } else switch (g.map[y][x]) {
                     .wall => '#',
@@ -897,7 +898,7 @@ test "color render paints the hurt hero red and shows the damage" {
     const out = try renderToBuf(&g, &buf, .{ .color = true });
     try testing.expect(std.mem.indexOf(u8, out, ansi_red ++ "@") != null);
     try testing.expect(std.mem.indexOf(u8, out, ansi_cyan ++ "@") == null);
-    try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ "M") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_bite ++ "M") != null);
     try testing.expect(std.mem.indexOf(u8, out, "(-1 HP)") != null);
 }
 
@@ -911,6 +912,15 @@ test "color render highlights the stairs in yellow" {
     const plain = try renderToBuf(&g, &buf, .{});
     try testing.expect(std.mem.indexOfScalar(u8, plain, 0x1b) == null);
     try testing.expect(std.mem.indexOfScalar(u8, plain, '>') != null);
+}
+
+test "color render draws monsters in red" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_red ++ "M" ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ "M") == null);
 }
 
 test "color render highlights the hero in cyan" {

@@ -58,7 +58,7 @@ Type a command and press **Enter**:
 | Symbol | Meaning            |
 |--------|--------------------|
 | `@`    | you, the hero (cyan; red when hurt) |
-| `M`    | monster            |
+| `M`    | monster (red)      |
 | `$`    | gold (+10)         |
 | `>`    | stairs, your goal (yellow) |
 | `#`    | wall               |
@@ -68,7 +68,7 @@ Type a command and press **Enter**:
 - You start with **10 HP**.
 - Walk into a monster to attack it. Each hit deals 2 damage and monsters have 3 HP, so it takes two hits. A hit makes the monster blink with a `*`, or with an `X` when it dies.
 - Monsters within 6 tiles chase you. A monster next to you bites for 1 damage per turn.
-- Taking damage flashes and shakes the screen. The hero turns red and the attacking monster turns yellow.
+- Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).
 - Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and gold tends to hide in dead ends.
