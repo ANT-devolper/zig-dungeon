@@ -58,6 +58,7 @@ pub const RenderOptions = struct {
 const ansi_reset = "\x1b[0m";
 const ansi_red = "\x1b[1;31m";
 const ansi_yellow = "\x1b[1;33m";
+const ansi_cyan = "\x1b[1;36m";
 const ansi_red_bg = "\x1b[41m";
 const ansi_spark = "\x1b[1;37;45m";
 
@@ -531,7 +532,8 @@ pub const Game = struct {
                     color = ansi_spark;
                     break :blk if (g.hit_killed) 'X' else '*';
                 } else if (p.eql(g.hero)) blk: {
-                    if (hurt) color = ansi_red;
+                    // The hero always stands out: cyan, or red when just hurt.
+                    color = if (hurt) ansi_red else ansi_cyan;
                     break :blk '@';
                 } else if (g.monsterAt(p)) |i| blk: {
                     if (g.monsters[i].bit) color = ansi_yellow;
@@ -891,8 +893,17 @@ test "color render paints the hurt hero red and shows the damage" {
     var buf: [4096]u8 = undefined;
     const out = try renderToBuf(&g, &buf, .{ .color = true });
     try testing.expect(std.mem.indexOf(u8, out, ansi_red ++ "@") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_cyan ++ "@") == null);
     try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ "M") != null);
     try testing.expect(std.mem.indexOf(u8, out, "(-1 HP)") != null);
+}
+
+test "color render highlights the hero in cyan" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_cyan ++ "@" ++ ansi_reset) != null);
 }
 
 test "plain render has no ANSI codes" {

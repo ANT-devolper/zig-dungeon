@@ -57,7 +57,7 @@ Type a command and press **Enter**:
 
 | Symbol | Meaning            |
 |--------|--------------------|
-| `@`    | you, the hero      |
+| `@`    | you, the hero (cyan; red when hurt) |
 | `M`    | monster            |
 | `$`    | gold (+10)         |
 | `>`    | stairs             |
