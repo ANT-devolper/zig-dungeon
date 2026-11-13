@@ -35,7 +35,25 @@ pub const Pos = struct {
 pub const Monster = struct {
     pos: Pos,
     hp: i32,
+    /// True if this monster bit the hero during the last turn.
+    bit: bool = false,
 };
+
+/// How to draw a frame. The defaults produce plain text with no ANSI codes.
+pub const RenderOptions = struct {
+    /// Use ANSI colors (red hero and yellow attackers after taking damage).
+    color: bool = false,
+    /// Draw the map with a red background (damage flash).
+    flash: bool = false,
+    /// Left indent of each map row; 1 is the resting position, 0 and 2
+    /// shift the map left/right to shake the screen.
+    shake: u2 = 1,
+};
+
+const ansi_reset = "\x1b[0m";
+const ansi_red = "\x1b[1;31m";
+const ansi_yellow = "\x1b[1;33m";
+const ansi_red_bg = "\x1b[41m";
 
 pub const Command = enum {
     up,
@@ -140,6 +158,8 @@ pub const Game = struct {
     monster_count: usize = 0,
     state: State = .playing,
     message: []const u8 = "",
+    /// Damage the hero took during the last turn (drives the hit effects).
+    damage_taken: i32 = 0,
     rng: std.Random,
 
     /// Starts a new game on level 1, with random monsters and gold.
@@ -232,6 +252,9 @@ pub const Game = struct {
     pub fn step(g: *Game, cmd: Command) void {
         if (g.state != .playing) return;
 
+        g.damage_taken = 0;
+        for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
+
         switch (cmd) {
             .quit => {
                 g.state = .quit;
@@ -284,6 +307,8 @@ pub const Game = struct {
             const dist = m.pos.manhattan(g.hero);
             if (dist == 1) {
                 g.hp -= monster_damage;
+                g.damage_taken += monster_damage;
+                m.bit = true;
                 g.message = "A monster bites you!";
                 if (g.hp <= 0) {
                     g.hp = 0;
@@ -318,28 +343,48 @@ pub const Game = struct {
     }
 
     /// Draws the game state to any Writer.
-    pub fn render(g: *const Game, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn render(g: *const Game, w: *std.Io.Writer, opts: RenderOptions) std.Io.Writer.Error!void {
+        const hurt = g.damage_taken > 0;
         try w.print("DUNGEON  Level {d}/{d}   HP {d}/{d}   Gold {d}\n\n", .{
             g.level, last_level, g.hp, max_hp, g.gold,
         });
         for (0..H) |y| {
+            try w.splatByteAll(' ', opts.shake);
+            if (opts.flash) try w.writeAll(ansi_red_bg);
             for (0..W) |x| {
                 const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
-                const c: u8 = if (p.eql(g.hero))
-                    '@'
-                else if (g.monsterAt(p) != null)
-                    'M'
-                else switch (g.map[y][x]) {
+                // Color to wrap this cell with, if any.
+                var color: ?[]const u8 = null;
+                const c: u8 = if (p.eql(g.hero)) blk: {
+                    if (hurt) color = ansi_red;
+                    break :blk '@';
+                } else if (g.monsterAt(p)) |i| blk: {
+                    if (g.monsters[i].bit) color = ansi_yellow;
+                    break :blk 'M';
+                } else switch (g.map[y][x]) {
                     .wall => '#',
                     .floor => '.',
                     .gold => '$',
                     .stairs => '>',
                 };
-                try w.writeByte(c);
+                if (opts.color and !opts.flash and color != null) {
+                    try w.print("{s}{c}{s}", .{ color.?, c, ansi_reset });
+                } else {
+                    try w.writeByte(c);
+                }
             }
+            if (opts.flash) try w.writeAll(ansi_reset);
             try w.writeByte('\n');
         }
-        try w.print("\n{s}\n", .{g.message});
+        try w.print("\n{s}", .{g.message});
+        if (hurt) {
+            if (opts.color) {
+                try w.print(" {s}(-{d} HP){s}", .{ ansi_red, g.damage_taken, ansi_reset });
+            } else {
+                try w.print(" (-{d} HP)", .{g.damage_taken});
+            }
+        }
+        try w.writeByte('\n');
         if (g.state == .playing) {
             try w.writeAll("[w/a/s/d] move  [.] wait  [q] quit  + Enter\n> ");
         }
@@ -513,6 +558,79 @@ test "new game spawns monsters away from the hero and renders" {
     }
     var buf: [2048]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    try g.render(&w);
+    try g.render(&w, .{});
     try testing.expect(std.mem.indexOf(u8, w.buffered(), "@") != null);
+}
+
+test "a bite records the damage and marks the attacker" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, monster_damage), g.damage_taken);
+    try testing.expect(g.monsters[0].bit);
+}
+
+test "a turn without damage clears the hit state" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.wait); // bitten
+    g.step(.right); // hero hits the monster...
+    g.step(.right); // ...and kills it, so nobody bites this turn
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+    try testing.expectEqual(@as(i32, 0), g.damage_taken);
+}
+
+test "a turn without a bite clears the monster mark" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.wait); // bitten
+    g.hero = .{ .x = 20, .y = 9 }; // teleport far away from the monster
+    g.step(.wait);
+    try testing.expect(!g.monsters[0].bit);
+    try testing.expectEqual(@as(i32, 0), g.damage_taken);
+}
+
+fn renderToBuf(g: *const Game, buf: []u8, opts: RenderOptions) ![]const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    try g.render(&w, opts);
+    return w.buffered();
+}
+
+test "color render paints the hurt hero red and shows the damage" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.wait);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_red ++ "@") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ "M") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "(-1 HP)") != null);
+}
+
+test "plain render has no ANSI codes" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.wait);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOfScalar(u8, out, 0x1b) == null);
+    try testing.expect(std.mem.indexOf(u8, out, "(-1 HP)") != null);
+}
+
+test "flash render uses a red background" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .flash = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_red_bg) != null);
+}
+
+test "shake shifts the map rows" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+    const row = "##############################\n";
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 0 }), "\n\n" ++ row) != null);
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 1 }), "\n\n " ++ row) != null);
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 2 }), "\n\n  " ++ row) != null);
 }

@@ -21,20 +21,39 @@ pub fn main(init: std.process.Init) !void {
     const in = &in_file.interface;
 
     while (game.state == .playing) {
-        try out.writeAll("\x1b[2J\x1b[H"); // clear the screen (ANSI)
-        try game.render(out);
-        try out.flush();
+        try drawFrame(out, &game, .{ .color = true });
 
         const line = try in.takeDelimiter('\n') orelse break; // EOF (Ctrl+Z / end of pipe)
         if (dungeon.parseCommand(line)) |cmd| {
             game.step(cmd);
+            if (game.damage_taken > 0) try playHitEffect(io, out, &game);
         } else {
             game.message = "Invalid command. Use w/a/s/d, . or q.";
         }
     }
 
-    try out.writeAll("\x1b[2J\x1b[H");
-    try game.render(out);
+    try drawFrame(out, &game, .{ .color = true });
     try out.print("\nFinal score: {d} gold, level {d}.\n", .{ game.gold, game.level });
     try out.flush();
+}
+
+/// Clears the screen and draws one frame.
+fn drawFrame(out: *Io.Writer, game: *const dungeon.Game, opts: dungeon.RenderOptions) !void {
+    try out.writeAll("\x1b[2J\x1b[H"); // clear the screen (ANSI)
+    try game.render(out, opts);
+    try out.flush();
+}
+
+/// Short animation when the hero gets hurt: red flash, then a screen shake.
+fn playHitEffect(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
+    const frames = [_]struct { opts: dungeon.RenderOptions, ms: i64 }{
+        .{ .opts = .{ .flash = true, .shake = 2 }, .ms = 70 },
+        .{ .opts = .{ .flash = true, .shake = 0 }, .ms = 70 },
+        .{ .opts = .{ .color = true, .shake = 2 }, .ms = 60 },
+        .{ .opts = .{ .color = true, .shake = 0 }, .ms = 60 },
+    };
+    for (frames) |f| {
+        try drawFrame(out, game, f.opts);
+        try io.sleep(Io.Duration.fromMilliseconds(f.ms), .awake);
+    }
 }

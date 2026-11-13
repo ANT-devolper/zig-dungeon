@@ -68,6 +68,7 @@ Type a command and press **Enter**:
 - You start with **10 HP**.
 - Walk into a monster to attack it. Each hit deals 2 damage and monsters have 3 HP, so it takes two hits.
 - Monsters within 6 tiles chase you. A monster next to you bites for 1 damage per turn.
+- Taking damage flashes and shakes the screen. The hero turns red and the attacking monster turns yellow.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).
 - Take the stairs on level 3 and you **win**. If your HP reaches 0, you **lose**.
@@ -78,7 +79,7 @@ Type a command and press **Enter**:
 zig build test --summary all
 ```
 
-The tests cover command parsing, movement, combat, monster AI, level changes, winning and losing. One test checks that every level has a path from the start to the stairs.
+The tests cover command parsing, movement, combat, monster AI, level changes, winning and losing, and the damage effects (colors, flash and shake). One test checks that every level has a path from the start to the stairs.
 
 ## Project layout
 
