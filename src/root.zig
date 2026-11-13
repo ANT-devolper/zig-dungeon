@@ -31,10 +31,14 @@ pub const speed_turns = 10;
 const strength_chance = 15;
 /// Rounds the strength bonus lasts after the round it was drunk in.
 pub const strength_turns = 3;
+/// Chance (in %) that a chest's potion is a vision potion.
+const vision_chance = 10;
+/// Rounds the hero sees the whole map after the round it was drunk in.
+pub const vision_turns = 3;
 
 /// Potion kinds the hero can carry: three sizes of health potion, three
-/// sizes of strength potion, plus the time stop and speed potions, which
-/// are single kinds with no sizes.
+/// sizes of strength potion, plus the time stop, speed and vision potions,
+/// which are single kinds with no sizes.
 pub const Potion = enum {
     small,
     medium,
@@ -44,8 +48,9 @@ pub const Potion = enum {
     strength_small,
     strength_medium,
     strength_large,
+    vision,
 
-    pub const count = 8;
+    pub const count = 9;
 
     /// HP restored (only health potions heal).
     pub fn heal(p: Potion) i32 {
@@ -96,6 +101,7 @@ pub const Potion = enum {
             .strength_small => "small strength potion",
             .strength_medium => "medium strength potion",
             .strength_large => "large strength potion",
+            .vision => "vision potion",
         };
     }
 
@@ -263,6 +269,7 @@ pub const Events = struct {
     time_stop: bool = false,
     speed: bool = false,
     strength: bool = false,
+    vision: bool = false,
     stairs: bool = false,
     won: bool = false,
     lost: bool = false,
@@ -347,6 +354,10 @@ pub const Game = struct {
     strength_bonus: i32 = 0,
     /// Strength was drunk during the current round, which does not count.
     strength_fresh: bool = false,
+    /// Rounds left seeing the whole map (vision potion).
+    vision: u8 = 0,
+    /// Vision was drunk during the current round, which does not count.
+    vision_fresh: bool = false,
     /// A fast hero already used the first of the 2 actions of this round.
     half_round: bool = false,
     events: Events = .{},
@@ -680,6 +691,8 @@ pub const Game = struct {
                                 .speed
                             else if (roll < time_stop_chance + speed_chance + strength_chance)
                                 Potion.strengthFromRoll(g.rng.uintLessThan(u8, 100))
+                            else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance)
+                                .vision
                             else
                                 Potion.fromRoll(g.rng.uintLessThan(u8, 100));
                             g.inventory.add(kind);
@@ -736,6 +749,11 @@ pub const Game = struct {
             g.strength -= 1;
             if (g.strength == 0) g.strength_bonus = 0;
         }
+        if (g.vision_fresh) {
+            g.vision_fresh = false; // the round it was drunk in is free
+        } else if (g.vision > 0) {
+            g.vision -= 1;
+        }
         if (!frozen) g.monstersTurn();
     }
 
@@ -747,6 +765,11 @@ pub const Game = struct {
     /// True while the monsters are frozen by a time stop potion.
     pub fn timeStopped(g: *const Game) bool {
         return g.time_stop > 0;
+    }
+
+    /// True while the hero sees the whole map (vision potion).
+    pub fn hasVision(g: *const Game) bool {
+        return g.vision > 0;
     }
 
     /// True while the hero is fast (speed potion).
@@ -770,6 +793,14 @@ pub const Game = struct {
             g.speed = speed_turns; // drinking again resets, never adds
             g.events.speed = true;
             g.message = "You feel fast!";
+            return true;
+        }
+        if (kind == .vision) {
+            g.inventory.remove(kind);
+            g.vision = vision_turns; // drinking again resets, never adds
+            g.vision_fresh = true;
+            g.events.vision = true;
+            g.message = "Your eyes glow! You see the whole map.";
             return true;
         }
         if (kind.strength() > 0) {
@@ -915,7 +946,8 @@ pub const Game = struct {
     /// Draws the game state to any Writer.
     pub fn render(g: *const Game, w: *std.Io.Writer, opts: RenderOptions) std.Io.Writer.Error!void {
         const hurt = g.damage_taken > 0;
-        const seen: ?[H][W]bool = if (opts.fov) g.visibility() else null;
+        // A vision potion lifts the field of view: the whole map is drawn.
+        const seen: ?[H][W]bool = if (opts.fov and !g.hasVision()) g.visibility() else null;
         try g.writeHeader(w);
         for (0..H) |y| {
             try w.splatByteAll(' ', opts.shake);
@@ -1008,6 +1040,7 @@ pub const Game = struct {
         if (g.time_stop > 0) try w.print("   TIME STOP {d}", .{g.time_stop});
         if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
         if (g.strength > 0) try w.print("   STRENGTH +{d} ({d})", .{ g.strength_bonus, g.strength });
+        if (g.vision > 0) try w.print("   VISION {d}", .{g.vision});
         try w.writeAll("\n\n");
     }
 
@@ -1037,6 +1070,7 @@ pub const Game = struct {
                 .strength_small => "Small strength potion  (+1 dmg, 3 turns)",
                 .strength_medium => "Medium strength potion (+2 dmg, 3 turns)",
                 .strength_large => "Large strength potion  (+3 dmg, 3 turns)",
+                .vision => "Vision potion        (3 turns)",
             };
             try w.print("  {d}) {s} ..... x", .{ number, label });
             try writeAmount(w, color, inv.potionCount(p));
@@ -1367,7 +1401,7 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.fromRoll(@intCast(r)).index()] += 1;
     // Time stop has no sizes: it never comes out of the size roll.
-    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0, 0, 0, 0 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0, 0, 0, 0, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.small.heal());
     try testing.expectEqual(@as(i32, 3), Potion.medium.heal());
     try testing.expectEqual(@as(i32, 5), Potion.large.heal());
@@ -1377,7 +1411,7 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
 test "strength potions add 1, 2 and 3 damage and use the same size split" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.strengthFromRoll(@intCast(r)).index()] += 1;
-    try testing.expectEqual([Potion.count]usize{ 0, 0, 0, 0, 0, 50, 35, 15 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 0, 0, 0, 0, 0, 50, 35, 15, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.strength_small.strength());
     try testing.expectEqual(@as(i32, 2), Potion.strength_medium.strength());
     try testing.expectEqual(@as(i32, 3), Potion.strength_large.strength());
@@ -1459,11 +1493,13 @@ test "strength combines with speed and time stop: it counts rounds, not actions"
     try testing.expectEqual(@as(i32, hero_damage), g.attackDamage());
 }
 
-test "chest potions: about 10% time stop, 15% speed and 15% strength" {
+test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision and 50% health" {
     var potions: usize = 0;
     var time_stops: usize = 0;
     var speeds: usize = 0;
     var strengths: usize = 0;
+    var visions: usize = 0;
+    var healths: usize = 0;
     var seed: u64 = 0;
     while (potions < 2000) : (seed += 1) {
         var prng = std.Random.DefaultPrng.init(seed);
@@ -1475,12 +1511,79 @@ test "chest potions: about 10% time stop, 15% speed and 15% strength" {
             .time_stop => time_stops += 1,
             .speed => speeds += 1,
             .strength_small, .strength_medium, .strength_large => strengths += 1,
-            else => {},
+            .vision => visions += 1,
+            .small, .medium, .large => healths += 1,
         }
     }
     try testing.expect(time_stops >= 100 and time_stops <= 300); // 5%..15%
     try testing.expect(speeds >= 200 and speeds <= 400); // 10%..20%
     try testing.expect(strengths >= 200 and strengths <= 400); // 10%..20%
+    try testing.expect(visions >= 100 and visions <= 300); // 5%..15%
+    try testing.expect(healths >= 900 and healths <= 1100); // 45%..55%
+}
+
+test "vision works at full health and shows its counter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.vision);
+    g.step(.use_1);
+    try testing.expect(g.events.vision);
+    try testing.expectEqual(@as(u8, vision_turns), g.vision);
+    try testing.expect(g.hasVision());
+    try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.vision));
+    try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
+    var buf: [8192]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "VISION 3") != null);
+}
+
+test "vision shows the whole map for the drink round plus 3, then fov comes back" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, .{
+        "##############################",
+        "#@.......................$>..#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "##############################",
+    });
+    const gold: Pos = .{ .x = 25, .y = 1 };
+    const stairs: Pos = .{ .x = 26, .y = 1 };
+    var buf: [8192]u8 = undefined;
+    // Far away: hidden by the field of view.
+    var out = try renderToBuf(&g, &buf, .{ .fov = true });
+    try testing.expectEqual(@as(u8, '.'), cellAt(out, stairs, 1));
+
+    g.inventory.add(.vision);
+    g.step(.use_1); // the drink round is free
+    for (0..vision_turns) |_| {
+        out = try renderToBuf(&g, &buf, .{ .fov = true });
+        try testing.expectEqual(@as(u8, '$'), cellAt(out, gold, 1));
+        try testing.expectEqual(@as(u8, '>'), cellAt(out, stairs, 1));
+        g.step(.wait);
+    }
+    try testing.expectEqual(@as(u8, 0), g.vision);
+    out = try renderToBuf(&g, &buf, .{ .fov = true });
+    try testing.expectEqual(@as(u8, '.'), cellAt(out, gold, 1));
+    try testing.expectEqual(@as(u8, '.'), cellAt(out, stairs, 1));
+    try testing.expect(std.mem.indexOf(u8, out, "VISION") == null);
+}
+
+test "drinking vision again resets the counter to 3, never adds" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.vision);
+    g.inventory.add(.vision);
+    g.step(.use_1);
+    g.step(.wait); // 3 -> 2
+    try testing.expectEqual(@as(u8, 2), g.vision);
+    g.step(.use_1);
+    try testing.expectEqual(@as(u8, vision_turns), g.vision);
 }
 
 test "speed works at full health and shows its counter" {
