@@ -6,11 +6,12 @@ pub const sound = @import("sound.zig");
 pub const W = 30;
 pub const H = 12;
 pub const max_monsters = 8;
-pub const last_level = 3;
 pub const max_hp = 10;
 
 const hero_damage = 2;
+/// Monster HP on levels 1-3; they gain 1 HP every `monster_hp_step` levels.
 const monster_hp = 3;
+const monster_hp_step = 3;
 const monster_damage = 1;
 const gold_value = 10;
 /// Chance (in %) that an item spot holds a chest instead of gold.
@@ -258,7 +259,7 @@ pub const Inventory = struct {
     }
 };
 
-pub const State = enum { playing, won, lost, quit };
+pub const State = enum { playing, lost, quit };
 
 /// Things that happened during the last turn (used for sound effects).
 /// Strikes and damage are tracked by `hit_pos`, `hit_killed` and `damage_taken`.
@@ -271,7 +272,6 @@ pub const Events = struct {
     strength: bool = false,
     vision: bool = false,
     stairs: bool = false,
-    won: bool = false,
     lost: bool = false,
 };
 
@@ -325,7 +325,7 @@ pub const Game = struct {
     hero: Pos = .{ .x = 1, .y = 1 },
     hp: i32 = max_hp,
     inventory: Inventory = .{},
-    level: u8 = 1,
+    level: u32 = 1,
     monsters: [max_monsters]Monster = undefined,
     monster_count: usize = 0,
     state: State = .playing,
@@ -371,8 +371,8 @@ pub const Game = struct {
         return g;
     }
 
-    /// Generates level `n` (1..last_level), keeping HP and gold.
-    pub fn loadLevel(g: *Game, n: u8) void {
+    /// Generates level `n` (1, 2, ... with no end), keeping HP and gold.
+    pub fn loadLevel(g: *Game, n: u32) void {
         g.level = n;
         g.generateLevel();
         g.spawnLoot();
@@ -580,9 +580,14 @@ pub const Game = struct {
         }
     }
 
+    /// Monsters get tougher the deeper the hero goes.
+    fn monsterHp(level: u32) i32 {
+        return monster_hp + @as(i32, @intCast((level - 1) / monster_hp_step));
+    }
+
     fn addMonster(g: *Game, p: Pos) void {
         if (g.monster_count == max_monsters) return;
-        g.monsters[g.monster_count] = .{ .pos = p, .hp = monster_hp };
+        g.monsters[g.monster_count] = .{ .pos = p, .hp = monsterHp(g.level) };
         g.monster_count += 1;
     }
 
@@ -709,16 +714,10 @@ pub const Game = struct {
                         g.message = "You open the chest!";
                     },
                     .stairs => {
-                        if (g.level == last_level) {
-                            g.hero = target;
-                            g.state = .won;
-                            g.events.won = true;
-                            g.message = "You escaped the dungeon! VICTORY!";
-                        } else {
-                            g.loadLevel(g.level + 1);
-                            g.events.stairs = true;
-                            g.message = "You go down the stairs...";
-                        }
+                        // The dungeon has no bottom: always one level deeper.
+                        g.loadLevel(g.level + 1);
+                        g.events.stairs = true;
+                        g.message = "You go down the stairs...";
                         g.half_round = false; // a new level starts a new round
                         return; // new level: monsters do not act this turn
                     },
@@ -1046,8 +1045,8 @@ pub const Game = struct {
 
     /// Status line shared by the map and the inventory screen.
     fn writeHeader(g: *const Game, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        try w.print("DUNGEON  Level {d}/{d}   HP {d}/{d}   Gold {d}", .{
-            g.level, last_level, g.hp, max_hp, g.inventory.gold,
+        try w.print("DUNGEON  Level {d}   HP {d}/{d}   Gold {d}", .{
+            g.level, g.hp, max_hp, g.inventory.gold,
         });
         if (g.time_stop > 0) try w.print("   TIME STOP {d}", .{g.time_stop});
         if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
@@ -1300,18 +1299,44 @@ test "stairs lead to the next level keeping HP and gold" {
     g.inventory.gold = 30;
     g.hp = 7;
     g.step(.down);
-    try testing.expectEqual(@as(u8, 2), g.level);
+    try testing.expectEqual(@as(u32, 2), g.level);
     try testing.expectEqual(@as(u32, 30), g.inventory.gold);
     try testing.expectEqual(@as(i32, 7), g.hp);
     try testing.expectEqual(State.playing, g.state);
 }
 
-test "stairs on the last level win the game" {
+test "the stairs always lead one level deeper" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, test_layout);
-    g.level = last_level;
+    g.level = 3; // the old last level
     g.step(.down);
-    try testing.expectEqual(State.won, g.state);
+    try testing.expectEqual(@as(u32, 4), g.level);
+    try testing.expectEqual(State.playing, g.state);
+    try testing.expect(g.events.stairs);
+    g.loadLevel(99);
+    try testing.expectEqual(@as(usize, max_monsters), g.monster_count);
+}
+
+test "monsters gain 1 HP every 3 levels" {
+    try testing.expectEqual(@as(i32, 3), Game.monsterHp(1));
+    try testing.expectEqual(@as(i32, 3), Game.monsterHp(3));
+    try testing.expectEqual(@as(i32, 4), Game.monsterHp(4));
+    try testing.expectEqual(@as(i32, 4), Game.monsterHp(6));
+    try testing.expectEqual(@as(i32, 5), Game.monsterHp(7));
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = Game.init(prng.random());
+    for (g.monsters[0..g.monster_count]) |m| try testing.expectEqual(@as(i32, 3), m.hp);
+    g.loadLevel(4);
+    for (g.monsters[0..g.monster_count]) |m| try testing.expectEqual(@as(i32, 4), m.hp);
+}
+
+test "the header shows the level with no last level" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.level = 12;
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "Level 12   HP") != null);
 }
 
 test "opening the inventory does not use a turn" {
@@ -1995,9 +2020,9 @@ test "generated mazes are always valid and finishable" {
     while (seed < 500) : (seed += 1) {
         var prng = std.Random.DefaultPrng.init(seed);
         var g = Game.init(prng.random());
-        for (1..last_level + 1) |n| {
+        for (1..13) |n| {
             if (n > 1) g.loadLevel(@intCast(n));
-            try testing.expectEqual(@as(usize, 1 + n * 2), g.monster_count);
+            try testing.expectEqual(@min(max_monsters, 1 + n * 2), g.monster_count);
             expectValidLevel(&g) catch |err| {
                 std.debug.print("invalid level {d} for seed {d}\n", .{ n, seed });
                 return err;
@@ -2013,7 +2038,7 @@ test "about a quarter of the item spots are chests" {
     while (seed < 500) : (seed += 1) {
         var prng = std.Random.DefaultPrng.init(seed);
         var g = Game.init(prng.random());
-        for (1..last_level + 1) |n| {
+        for (1..4) |n| {
             if (n > 1) g.loadLevel(@intCast(n));
             for (g.map) |row| for (row) |t| switch (t) {
                 .chest => {
@@ -2505,7 +2530,7 @@ test "color spark uses its own highlight" {
     try testing.expect(std.mem.indexOf(u8, out, ansi_spark ++ "*" ++ ansi_reset) != null);
 }
 
-test "turn events: gold, stairs, won and lost" {
+test "turn events: gold, stairs and lost" {
     var prng = std.Random.DefaultPrng.init(1);
 
     var g = testGame(&prng, test_layout);
@@ -2515,11 +2540,6 @@ test "turn events: gold, stairs, won and lost" {
     g = testGame(&prng, test_layout);
     g.step(.down);
     try testing.expectEqual(Events{ .stairs = true }, g.events);
-
-    g = testGame(&prng, test_layout);
-    g.level = last_level;
-    g.step(.down);
-    try testing.expectEqual(Events{ .won = true }, g.events);
 
     g = testGame(&prng, test_layout);
     g.hp = 1;

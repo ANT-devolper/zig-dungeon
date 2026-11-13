@@ -82,17 +82,12 @@ pub fn main(init: std.process.Init) !void {
     // terminal's earlier text stays where it was.
     try leaveScreen(out);
     try game.render(out, .{ .color = true, .fov = true });
-    try out.print("\nFinal score: {d} gold, level {d}.\n", .{ game.inventory.gold, game.level });
+    try out.print("\nFinal score: reached level {d} with {d} gold.\n", .{ game.level, game.inventory.gold });
     try out.flush();
 
     // Ending jingle. Wait for it, or it is cut off when the process exits.
-    const ending: ?sound.Sfx = switch (game.state) {
-        .won => .won,
-        .lost => .lost,
-        else => null,
-    };
-    if (ending) |sfx| {
-        playSfx(sfx);
+    if (game.state == .lost) {
+        playSfx(.lost);
         if (!muted) try io.sleep(Io.Duration.fromMilliseconds(900), .awake);
     }
 }

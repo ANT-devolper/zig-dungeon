@@ -19,8 +19,8 @@ src/term.zig    raw stdin mode (one key at a time, no echo, Ctrl+C as a key) for
 ## Game state (`Game` in `src/root.zig`)
 
 - Map `[H][W]Tile` (`W` 30, `H` 12), `Tile` = wall, floor, gold, chest, stairs.
-- Hero position, `hp` (`max_hp` 10), `level` (1..`last_level` 3), `state` (playing, won, lost, quit), `inventory`.
-- Monsters in a fixed array (`max_monsters` 8). Level `n` spawns `min(max_monsters, 1 + 2n)` monsters: 3, 5, 7.
+- Hero position, `hp` (`max_hp` 10), `level` (`u32`, 1, 2, ... with no end), `state` (playing, lost, quit), `inventory`.
+- Monsters in a fixed array (`max_monsters` 8). Level `n` spawns `min(max_monsters, 1 + 2n)` monsters: 3, 5, 7, then 8 from level 4 on.
 - Effect counters: `time_stop`, `speed`, `strength` + `strength_bonus`, `vision`, the `*_fresh` flags and `half_round` (see [features/rounds.md](features/rounds.md)).
 - **Per-turn effect state** (`damage_taken`, `hit_pos`, `hit_killed`, `healed`, `chest_gold`, `chest_potion`, `events`, `Monster.bit`) is reset at the start of `Game.step`. The renderer and `main.zig` read it after the step.
 - `message` is a static string. Numbers are appended by `render` ("(+N gold)", "(+N HP)", "(<potion label>)"), so **no formatted text is stored in `Game`**. Do not store slices into `Game`'s own memory, because `Game.init` returns it by value.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`zig-dungeon` is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) moves through 3 randomly generated ASCII mazes, fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is one key at a time: every key press acts at once, with no Enter. See `README.md` for the player-facing rules.
+`zig-dungeon` is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) goes down an endless series of randomly generated ASCII mazes (the goal is the deepest level), fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is one key at a time: every key press acts at once, with no Enter. See `README.md` for the player-facing rules.
 
 ## Toolchain
 

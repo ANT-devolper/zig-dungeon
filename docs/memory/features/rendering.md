@@ -5,7 +5,7 @@ Code: `Game.render`, `RenderOptions`, `writeHeader`, `renderInventory`, the `ans
 ## Frame
 
 - `RenderOptions{}` (the default) produces plain text with **no ANSI codes**; tests use it. Options: `color`, `flash` (red background), `shake` (row indent 0/1/2), `spark`, `fov` (see [fov.md](fov.md)).
-- Layout: header line (`writeHeader`: level, HP, gold, then `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N` while active), blank line, the map, the message (with "(+N gold)", "(<potion>)", "(+N HP)", "(-N HP)" appended), and the help line `[w/a/s/d] move  [.] wait  [i] inventory  [q] quit` while playing. There is no `> ` prompt and no mention of Enter.
+- Layout: header line (`writeHeader`: `Level N` with no maximum, HP, gold, then `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N` while active), blank line, the map, the message (with "(+N gold)", "(<potion>)", "(+N HP)", "(-N HP)" appended), and the help line `[w/a/s/d] move  [.] wait  [i] inventory  [q] quit` while playing. There is no `> ` prompt and no mention of Enter.
 - `drawFrame` in `main.zig` clears with `\x1b[2J\x1b[H` and always sets `fov`.
 
 ## Colors (`color = true`)

@@ -4,6 +4,9 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-13 | The dungeon is endless: the goal is to reach the deepest level. No win state. | User request. | `loadLevel`, [features/levels.md](features/levels.md) |
+| 2026-11-13 | Difficulty past level 4: still 8 monsters, **+1 monster HP every 3 levels**, bite stays 1. | User choice (over stronger bites or more monsters). | `monsterHp`, [features/monsters.md](features/monsters.md) |
+| 2026-11-13 | No saved record between runs; the final score is the level reached plus gold. | User choice. | `main.zig` |
 | 2026-11-13 | When every monster on a level is defeated, the stairs show through the field of view until the next level. Only the stairs, not gold or chests. | User request: a reward for clearing a level. | `stairsRevealed`, [features/fov.md](features/fov.md) |
 | 2026-11-13 | Claude never runs `git push`; the user pushes. | User rule. | [workflow.md](workflow.md) |
 | 2026-11-13 | `.gitattributes` forces LF line endings for the whole repo; the global git config stays untouched. | `core.autocrlf=true` rewrote files with CRLF and broke `zig fmt --check`. | `.gitattributes` |

@@ -19,7 +19,7 @@ A user request: every key press acts at once, as if Enter were pressed after it.
 A user request: moves must not leave copies of the map in the terminal.
 
 - At start, `main.zig` writes `alt_screen_on` (`\x1b[?1049h`, enter the alternate screen, plus `\x1b[?25l`, hide the cursor). The alternate screen has no scrollback, so the per-frame clear (`\x1b[2J\x1b[H`) leaves no history.
-- At the end, `leaveScreen` writes `alt_screen_off` (show the cursor, back to the normal screen). Then the last frame is printed once, **without** clearing, with the final score, so the result stays visible and the terminal's earlier text is kept. `errdefer` also leaves the screen on an error.
+- At the end, `leaveScreen` writes `alt_screen_off` (show the cursor, back to the normal screen). Then the last frame is printed once, **without** clearing, with the final score (`Final score: reached level N with G gold.`), so the result stays visible and the terminal's earlier text is kept. `errdefer` also leaves the screen on an error.
 
 ## Smoke test
 
