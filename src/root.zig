@@ -17,30 +17,49 @@ const gold_value = 10;
 const chest_chance = 25;
 const chest_gold_min = 20;
 const chest_gold_max = 50;
-/// Chance (in %) that a chest also holds a healing potion.
+/// Chance (in %) that a chest holds a potion instead of gold.
 const chest_potion_chance = 50;
+/// Chance (in %) that a chest's potion is a time stop potion.
+const time_stop_chance = 10;
+/// Free turns the monsters stay frozen after drinking time stop.
+pub const time_stop_turns = 3;
 
-/// Healing potion sizes. Small ones are the most common.
+/// Potion kinds the hero can carry: three sizes of health potion and the
+/// time stop potion, which is a single kind with no sizes.
 pub const Potion = enum {
     small,
     medium,
     large,
+    time_stop,
 
-    pub const count = 3;
+    pub const count = 4;
 
+    /// HP restored (time stop heals nothing).
     pub fn heal(p: Potion) i32 {
         return switch (p) {
             .small => 1,
             .medium => 3,
             .large => 5,
+            .time_stop => 0,
         };
     }
 
-    /// Maps a roll in 0..99 to a size: small 50%, medium 35%, large 15%.
+    /// Maps a roll in 0..99 to a health potion size: small 50%,
+    /// medium 35%, large 15%. Never returns `time_stop`.
     pub fn fromRoll(roll: u8) Potion {
         if (roll < 50) return .small;
         if (roll < 85) return .medium;
         return .large;
+    }
+
+    /// Name used in messages.
+    pub fn label(p: Potion) []const u8 {
+        return switch (p) {
+            .small => "small health potion",
+            .medium => "medium health potion",
+            .large => "large health potion",
+            .time_stop => "time stop potion",
+        };
     }
 
     fn index(p: Potion) usize {
@@ -103,6 +122,7 @@ const ansi_yellow = "\x1b[1;33m";
 const ansi_cyan = "\x1b[1;36m";
 const ansi_green = "\x1b[1;32m";
 const ansi_magenta = "\x1b[1;35m";
+const ansi_blue = "\x1b[1;34m"; // frozen monsters (time stop)
 const ansi_dim = "\x1b[38;5;248m"; // light gray: out of sight
 const ansi_bite = "\x1b[1;37;41m"; // white on red: the monster that just bit
 const ansi_red_bg = "\x1b[41m";
@@ -202,6 +222,7 @@ pub const Events = struct {
     gold: bool = false,
     chest: bool = false,
     drink: bool = false,
+    time_stop: bool = false,
     stairs: bool = false,
     won: bool = false,
     lost: bool = false,
@@ -274,6 +295,8 @@ pub const Game = struct {
     chest_potion: ?Potion = null,
     /// HP restored by a potion during the last turn (0 if none).
     healed: i32 = 0,
+    /// Free turns left with the monsters frozen by a time stop potion.
+    time_stop: u8 = 0,
     events: Events = .{},
     rng: std.Random,
 
@@ -598,7 +621,10 @@ pub const Game = struct {
                         g.events.chest = true;
                         // A chest holds either a potion or gold, never both.
                         if (g.rng.uintLessThan(u8, 100) < chest_potion_chance) {
-                            const kind = Potion.fromRoll(g.rng.uintLessThan(u8, 100));
+                            const kind: Potion = if (g.rng.uintLessThan(u8, 100) < time_stop_chance)
+                                .time_stop
+                            else
+                                Potion.fromRoll(g.rng.uintLessThan(u8, 100));
                             g.inventory.add(kind);
                             g.chest_potion = kind;
                         } else {
@@ -626,12 +652,30 @@ pub const Game = struct {
             },
         }
 
-        g.monstersTurn();
+        if (g.events.time_stop) {
+            // Just drank time stop: frozen this turn, the counter starts next turn.
+        } else if (g.time_stop > 0) {
+            g.time_stop -= 1; // a free turn: the monsters stay frozen
+        } else {
+            g.monstersTurn();
+        }
+    }
+
+    /// True while the monsters are frozen by a time stop potion.
+    pub fn timeStopped(g: *const Game) bool {
+        return g.time_stop > 0 or g.events.time_stop;
     }
 
     /// Drinks a potion the hero carries. Returns false (and uses no turn)
-    /// when the hero is already at full health.
+    /// when it is a health potion and the hero is already at full health.
     fn drink(g: *Game, kind: Potion) bool {
+        if (kind == .time_stop) {
+            g.inventory.remove(kind);
+            g.time_stop = time_stop_turns; // drinking again resets, never adds
+            g.events.time_stop = true;
+            g.message = "Time stops! The monsters are frozen.";
+            return true;
+        }
         if (g.hp >= max_hp) {
             g.message = "You are already at full health.";
             return false;
@@ -643,9 +687,10 @@ pub const Game = struct {
         g.events.drink = true;
         // render() appends the HP restored: "(+N HP)".
         g.message = switch (kind) {
-            .small => "You drink a small potion.",
-            .medium => "You drink a medium potion.",
-            .large => "You drink a large potion.",
+            .small => "You drink a small health potion.",
+            .medium => "You drink a medium health potion.",
+            .large => "You drink a large health potion.",
+            .time_stop => unreachable, // handled above
         };
         return true;
     }
@@ -784,7 +829,12 @@ pub const Game = struct {
                     color = if (hurt) ansi_red else ansi_cyan;
                     break :blk '@';
                 } else if (g.monsterAt(p)) |i| blk: {
-                    color = if (g.monsters[i].bit) ansi_bite else ansi_red;
+                    color = if (g.timeStopped())
+                        ansi_blue
+                    else if (g.monsters[i].bit)
+                        ansi_bite
+                    else
+                        ansi_red;
                     break :blk 'M';
                 } else switch (g.map[y][x]) {
                     .wall => '#',
@@ -815,7 +865,7 @@ pub const Game = struct {
         if (g.events.chest) {
             if (opts.color) try w.writeAll(ansi_green);
             if (g.chest_potion) |p| {
-                try w.print(" ({s} potion)", .{@tagName(p)});
+                try w.print(" ({s})", .{p.label()});
             } else {
                 try w.print(" (+{d} gold)", .{g.chest_gold});
             }
@@ -843,9 +893,11 @@ pub const Game = struct {
 
     /// Status line shared by the map and the inventory screen.
     fn writeHeader(g: *const Game, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        try w.print("DUNGEON  Level {d}/{d}   HP {d}/{d}   Gold {d}\n\n", .{
+        try w.print("DUNGEON  Level {d}/{d}   HP {d}/{d}   Gold {d}", .{
             g.level, last_level, g.hp, max_hp, g.inventory.gold,
         });
+        if (g.time_stop > 0) try w.print("   TIME STOP {d}", .{g.time_stop});
+        try w.writeAll("\n\n");
     }
 
     /// Draws the inventory screen to any Writer.
@@ -866,9 +918,10 @@ pub const Game = struct {
         const items = inv.items();
         for (items, 1..) |p, number| {
             const label = switch (p) {
-                .small => "Small potion  (+1 HP)",
-                .medium => "Medium potion (+3 HP)",
-                .large => "Large potion  (+5 HP)",
+                .small => "Small health potion  (+1 HP)",
+                .medium => "Medium health potion (+3 HP)",
+                .large => "Large health potion  (+5 HP)",
+                .time_stop => "Time stop potion     (3 turns)",
             };
             try w.print("  {d}) {s} ..... x", .{ number, label });
             try writeAmount(w, color, inv.potionCount(p));
@@ -1130,10 +1183,10 @@ test "inventory lists items in pick-up order, numbered from 1" {
     var w: std.Io.Writer = .fixed(&buf);
     try g.renderInventory(&w, false);
     const out = w.buffered();
-    try testing.expect(std.mem.indexOf(u8, out, "1) Medium potion (+3 HP) ..... x2") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "2) Small potion  (+1 HP) ..... x1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "1) Medium health potion (+3 HP) ..... x2") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "2) Small health potion  (+1 HP) ..... x1") != null);
     // Items the hero does not have are not listed.
-    try testing.expect(std.mem.indexOf(u8, out, "Large potion") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "Large health potion") == null);
     try testing.expect(std.mem.indexOf(u8, out, "[1-2] use") != null);
 }
 
@@ -1174,7 +1227,7 @@ test "inventory hides zero gold and shows (empty) when there is nothing" {
     w = .fixed(&buf);
     try g.renderInventory(&w, false);
     out = w.buffered();
-    try testing.expect(std.mem.indexOf(u8, out, "1) Large potion  (+5 HP) ..... x1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "1) Large health potion  (+5 HP) ..... x1") != null);
     try testing.expect(std.mem.indexOf(u8, out, "[1] use") != null);
     try testing.expect(std.mem.indexOf(u8, out, "(empty)") == null);
 }
@@ -1182,10 +1235,121 @@ test "inventory hides zero gold and shows (empty) when there is nothing" {
 test "potion sizes: small 50%, medium 35%, large 15%" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.fromRoll(@intCast(r)).index()] += 1;
-    try testing.expectEqual([Potion.count]usize{ 50, 35, 15 }, counts);
+    // Time stop has no sizes: it never comes out of the size roll.
+    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.small.heal());
     try testing.expectEqual(@as(i32, 3), Potion.medium.heal());
     try testing.expectEqual(@as(i32, 5), Potion.large.heal());
+    try testing.expectEqual(@as(i32, 0), Potion.time_stop.heal());
+}
+
+test "about 10% of chest potions are time stop" {
+    var potions: usize = 0;
+    var time_stops: usize = 0;
+    var seed: u64 = 0;
+    while (potions < 2000) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, chest_layout);
+        g.step(.right);
+        const p = g.chest_potion orelse continue;
+        potions += 1;
+        if (p == .time_stop) time_stops += 1;
+    }
+    try testing.expect(time_stops >= 100 and time_stops <= 300); // 5%..15%
+}
+
+test "time stop freezes monsters on the drink turn and 3 more" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout); // a monster is next to the hero
+    g.hp = 5;
+    g.inventory.add(.time_stop);
+    const monster_pos = g.monsters[0].pos;
+
+    g.step(.use_1);
+    try testing.expect(g.events.time_stop);
+    try testing.expectEqualStrings("Time stops! The monsters are frozen.", g.message);
+    try testing.expectEqual(@as(u8, 3), g.time_stop);
+    try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
+
+    const expected_counter = [_]u8{ 2, 1, 0 };
+    for (expected_counter) |left| {
+        g.step(.wait);
+        try testing.expectEqual(left, g.time_stop);
+        try testing.expectEqual(@as(i32, 5), g.hp); // no bite
+        try testing.expectEqual(monster_pos, g.monsters[0].pos);
+    }
+
+    g.step(.wait); // time runs again
+    try testing.expectEqual(@as(i32, 5 - monster_damage), g.hp);
+}
+
+test "time stop works at full health" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.time_stop);
+    g.step(.use_1);
+    try testing.expect(g.events.time_stop);
+    try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.time_stop));
+    try testing.expectEqual(@as(i32, max_hp), g.hp);
+}
+
+test "frozen far-away monsters do not wander" {
+    var prng = std.Random.DefaultPrng.init(3);
+    var g = testGame(&prng, pocket_layout);
+    g.inventory.add(.time_stop);
+    const start = g.monsters[0].pos;
+    g.step(.use_1);
+    for (0..time_stop_turns) |_| g.step(.wait);
+    try testing.expectEqual(start, g.monsters[0].pos);
+}
+
+test "the hero can hit a frozen monster, which does not strike back" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.time_stop);
+    g.step(.use_1);
+    g.step(.right); // attack the adjacent monster
+    try testing.expectEqual(@as(i32, monster_hp - hero_damage), g.monsters[0].hp);
+    try testing.expectEqual(@as(i32, max_hp), g.hp);
+}
+
+test "drinking time stop again resets the counter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.time_stop);
+    g.inventory.add(.time_stop);
+    g.step(.use_1);
+    g.step(.wait);
+    g.step(.wait);
+    try testing.expectEqual(@as(u8, 1), g.time_stop);
+    g.step(.use_1);
+    try testing.expectEqual(@as(u8, time_stop_turns), g.time_stop);
+}
+
+test "time stop shows blue monsters and a header counter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    var buf: [8192]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "TIME STOP") == null);
+
+    g.inventory.add(.time_stop);
+    g.step(.use_1);
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_blue ++ "M" ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, "TIME STOP 3") != null);
+}
+
+test "inventory lists the time stop potion without a size" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.small);
+    g.inventory.add(.time_stop);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "1) Small health potion  (+1 HP) ..... x1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "2) Time stop potion     (3 turns) ..... x1") != null);
 }
 
 /// Open floor with a chest right of the hero.
@@ -1221,12 +1385,12 @@ test "about half of the chests hold a potion, and then no gold" {
             // The message names the potion, without gold.
             var buf: [4096]u8 = undefined;
             var expected: [32]u8 = undefined;
-            const text = try std.fmt.bufPrint(&expected, "({s} potion)", .{@tagName(p)});
+            const text = try std.fmt.bufPrint(&expected, "({s})", .{p.label()});
             const out = try renderToBuf(&g, &buf, .{});
             try testing.expect(std.mem.indexOf(u8, out, text) != null);
             try testing.expect(std.mem.indexOf(u8, out, "gold)") == null);
         } else {
-            try testing.expectEqual([Potion.count]u32{ 0, 0, 0 }, g.inventory.potions);
+            try testing.expectEqual([Potion.count]u32{ 0, 0, 0, 0 }, g.inventory.potions);
             try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
             try testing.expect(g.chest_gold >= chest_gold_min);
         }

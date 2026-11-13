@@ -75,8 +75,10 @@ Type a command and press **Enter**:
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).
-- Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and loot tends to hide in dead ends. Each item spot holds gold or, 1 time in 4, a chest. A chest holds either 20 to 50 gold or a healing potion.
-- Half of the chests hold a healing potion instead of gold (never both): small (+1 HP, 50%), medium (+3 HP, 35%) or large (+5 HP, 15%). Potions go to your inventory, which numbers items in the order you picked them up. When an item runs out, the ones below move up, so the numbers are always 1, 2, 3... Drinking uses a turn and never heals past 10 HP. Typing a number with no item, or drinking at full health, uses no turn.
+- Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and loot tends to hide in dead ends. Each item spot holds gold or, 1 time in 4, a chest. A chest holds either 20 to 50 gold or a health potion.
+- Half of the chests hold a potion instead of gold (never both). 1 potion in 10 is a **time stop potion**, a single kind with no sizes. The rest are health potions: small (+1 HP, 50%), medium (+3 HP, 35%) or large (+5 HP, 15%).
+- **Time stop** freezes every monster on the turn you drink it and for 3 more turns: they do not move or attack, but you can still hit them. Frozen monsters turn blue and the status line shows `TIME STOP N`, the free turns left. Drinking another one resets it to 3. It works at full health.
+- Potions go to your inventory, which numbers items in the order you picked them up. When an item runs out, the ones below move up, so the numbers are always 1, 2, 3... Drinking uses a turn and never heals past 10 HP. Typing a number with no item, or drinking at full health, uses no turn.
 - Take the stairs on level 3 and you **win**. If your HP reaches 0, you **lose**.
 
 ## Sound

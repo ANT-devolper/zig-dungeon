@@ -30,6 +30,7 @@ pub const Sfx = enum {
     gold,
     chest,
     drink,
+    time_stop,
     stairs,
     won,
     lost,
@@ -57,6 +58,9 @@ pub const Sfx = enum {
             },
             .drink => &.{
                 .{ .freq_start = 300, .freq_end = 900, .ms = 180, .volume = 0.25 },
+            },
+            .time_stop => &.{
+                .{ .freq_start = 1200, .freq_end = 200, .ms = 400, .volume = 0.3 },
             },
             .stairs => &.{
                 .{ .freq_start = 660, .ms = 90 },
