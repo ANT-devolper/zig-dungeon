@@ -17,6 +17,36 @@ const gold_value = 10;
 const chest_chance = 25;
 const chest_gold_min = 20;
 const chest_gold_max = 50;
+/// Chance (in %) that a chest also holds a healing potion.
+const chest_potion_chance = 50;
+
+/// Healing potion sizes. Small ones are the most common.
+pub const Potion = enum {
+    small,
+    medium,
+    large,
+
+    pub const count = 3;
+
+    pub fn heal(p: Potion) i32 {
+        return switch (p) {
+            .small => 1,
+            .medium => 3,
+            .large => 5,
+        };
+    }
+
+    /// Maps a roll in 0..99 to a size: small 50%, medium 35%, large 15%.
+    pub fn fromRoll(roll: u8) Potion {
+        if (roll < 50) return .small;
+        if (roll < 85) return .medium;
+        return .large;
+    }
+
+    fn index(p: Potion) usize {
+        return @backingInt(p);
+    }
+};
 const chase_radius = 6;
 /// Chance (in %) that a monster that is not chasing takes a random step.
 const wander_chance = 30;
@@ -87,6 +117,17 @@ pub const Command = enum {
     quit,
     /// Open the inventory screen. Does not use a turn.
     inventory,
+    /// Use the item listed with that number in the inventory (keys 1-9).
+    /// Uses a turn when it works.
+    use_1,
+    use_2,
+    use_3,
+    use_4,
+    use_5,
+    use_6,
+    use_7,
+    use_8,
+    use_9,
 
     fn delta(c: Command) Pos {
         return switch (c) {
@@ -94,15 +135,63 @@ pub const Command = enum {
             .down => .{ .x = 0, .y = 1 },
             .left => .{ .x = -1, .y = 0 },
             .right => .{ .x = 1, .y = 0 },
-            .wait, .quit, .inventory => .{ .x = 0, .y = 0 },
+            else => .{ .x = 0, .y = 0 },
         };
+    }
+
+    /// The 0-based inventory slot a use command refers to, if it is one.
+    pub fn slot(c: Command) ?usize {
+        const i = @backingInt(c);
+        const first = @backingInt(Command.use_1);
+        if (i < first) return null;
+        return i - first;
     }
 };
 
-/// What the hero carries. New item kinds go here as new fields, and
-/// `Game.renderInventory` lists them.
+/// What the hero carries. Usable items are listed in the order they were
+/// first picked up; when one runs out it leaves the list and the ones
+/// below move up, so the numbers shown are always 1, 2, 3... with no gaps.
 pub const Inventory = struct {
     gold: u32 = 0,
+    /// How many of each potion, indexed by `Potion.index()`.
+    potions: [Potion.count]u32 = @splat(0),
+    /// Usable item kinds the hero has, in pick-up order (slot 0 is "1").
+    slots: [Potion.count]Potion = undefined,
+    slot_count: usize = 0,
+
+    pub fn potionCount(inv: Inventory, p: Potion) u32 {
+        return inv.potions[p.index()];
+    }
+
+    /// The listed items, in order.
+    pub fn items(inv: *const Inventory) []const Potion {
+        return inv.slots[0..inv.slot_count];
+    }
+
+    /// The item shown with number `slot + 1`, if any.
+    pub fn itemAt(inv: *const Inventory, slot: usize) ?Potion {
+        if (slot >= inv.slot_count) return null;
+        return inv.slots[slot];
+    }
+
+    /// Adds one potion; a kind the hero did not have goes to the end.
+    pub fn add(inv: *Inventory, p: Potion) void {
+        if (inv.potions[p.index()] == 0) {
+            inv.slots[inv.slot_count] = p;
+            inv.slot_count += 1;
+        }
+        inv.potions[p.index()] += 1;
+    }
+
+    /// Removes one potion; when it runs out the items below move up.
+    pub fn remove(inv: *Inventory, p: Potion) void {
+        std.debug.assert(inv.potions[p.index()] > 0);
+        inv.potions[p.index()] -= 1;
+        if (inv.potions[p.index()] > 0) return;
+        const i = std.mem.indexOfScalar(Potion, inv.items(), p).?;
+        std.mem.copyForwards(Potion, inv.slots[i .. inv.slot_count - 1], inv.slots[i + 1 .. inv.slot_count]);
+        inv.slot_count -= 1;
+    }
 };
 
 pub const State = enum { playing, won, lost, quit };
@@ -112,6 +201,7 @@ pub const State = enum { playing, won, lost, quit };
 pub const Events = struct {
     gold: bool = false,
     chest: bool = false,
+    drink: bool = false,
     stairs: bool = false,
     won: bool = false,
     lost: bool = false,
@@ -129,6 +219,7 @@ pub fn parseCommand(line: []const u8) ?Command {
         '.' => .wait,
         'q' => .quit,
         'i' => .inventory,
+        '1'...'9' => |d| @fromBackingInt(@intCast(@backingInt(Command.use_1) + (d - '1'))),
         else => null,
     };
 }
@@ -179,6 +270,10 @@ pub const Game = struct {
     hit_killed: bool = false,
     /// Gold found in the chest opened during the last turn (0 if none).
     chest_gold: u32 = 0,
+    /// Potion found in that chest, if any.
+    chest_potion: ?Potion = null,
+    /// HP restored by a potion during the last turn (0 if none).
+    healed: i32 = 0,
     events: Events = .{},
     rng: std.Random,
 
@@ -452,6 +547,8 @@ pub const Game = struct {
         g.hit_killed = false;
         g.events = .{};
         g.chest_gold = 0;
+        g.chest_potion = null;
+        g.healed = 0;
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
 
         switch (cmd) {
@@ -462,6 +559,15 @@ pub const Game = struct {
             },
             .wait => g.message = "You wait...",
             .inventory => unreachable, // handled above
+            .use_1, .use_2, .use_3, .use_4, .use_5, .use_6, .use_7, .use_8, .use_9 => {
+                // Using nothing, or failing to drink, does not use a turn:
+                // return before the monsters act.
+                const item = g.inventory.itemAt(cmd.slot().?) orelse {
+                    g.message = "You have no item with that number.";
+                    return;
+                };
+                if (!g.drink(item)) return;
+            },
             .up, .down, .left, .right => {
                 const target = g.hero.add(cmd.delta());
                 if (g.monsterAt(target)) |i| {
@@ -489,11 +595,18 @@ pub const Game = struct {
                     },
                     .chest => {
                         g.hero = target;
-                        g.chest_gold = g.rng.intRangeAtMost(u32, chest_gold_min, chest_gold_max);
-                        g.inventory.gold += g.chest_gold;
                         g.events.chest = true;
+                        // A chest holds either a potion or gold, never both.
+                        if (g.rng.uintLessThan(u8, 100) < chest_potion_chance) {
+                            const kind = Potion.fromRoll(g.rng.uintLessThan(u8, 100));
+                            g.inventory.add(kind);
+                            g.chest_potion = kind;
+                        } else {
+                            g.chest_gold = g.rng.intRangeAtMost(u32, chest_gold_min, chest_gold_max);
+                            g.inventory.gold += g.chest_gold;
+                        }
                         g.setTile(target, .floor);
-                        // render() appends the amount: "(+N gold)".
+                        // render() appends what was inside: "(+N gold)" or "(small potion)".
                         g.message = "You open the chest!";
                     },
                     .stairs => {
@@ -514,6 +627,27 @@ pub const Game = struct {
         }
 
         g.monstersTurn();
+    }
+
+    /// Drinks a potion the hero carries. Returns false (and uses no turn)
+    /// when the hero is already at full health.
+    fn drink(g: *Game, kind: Potion) bool {
+        if (g.hp >= max_hp) {
+            g.message = "You are already at full health.";
+            return false;
+        }
+        g.inventory.remove(kind);
+        const before = g.hp;
+        g.hp = @min(max_hp, g.hp + kind.heal());
+        g.healed = g.hp - before;
+        g.events.drink = true;
+        // render() appends the HP restored: "(+N HP)".
+        g.message = switch (kind) {
+            .small => "You drink a small potion.",
+            .medium => "You drink a medium potion.",
+            .large => "You drink a large potion.",
+        };
+        return true;
     }
 
     fn monstersTurn(g: *Game) void {
@@ -679,10 +813,19 @@ pub const Game = struct {
         }
         try w.print("\n{s}", .{g.message});
         if (g.events.chest) {
-            if (opts.color) {
-                try w.print(" {s}(+{d} gold){s}", .{ ansi_green, g.chest_gold, ansi_reset });
+            if (opts.color) try w.writeAll(ansi_green);
+            if (g.chest_potion) |p| {
+                try w.print(" ({s} potion)", .{@tagName(p)});
             } else {
                 try w.print(" (+{d} gold)", .{g.chest_gold});
+            }
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
+        if (g.healed > 0) {
+            if (opts.color) {
+                try w.print(" {s}(+{d} HP){s}", .{ ansi_green, g.healed, ansi_reset });
+            } else {
+                try w.print(" (+{d} HP)", .{g.healed});
             }
         }
         if (hurt) {
@@ -709,14 +852,50 @@ pub const Game = struct {
     pub fn renderInventory(g: *const Game, w: *std.Io.Writer, color: bool) std.Io.Writer.Error!void {
         try g.writeHeader(w);
         try w.writeAll("========== INVENTORY ==========\n\n");
-        if (color) {
-            try w.print("  Gold ................... {s}{d}{s}\n\n", .{ ansi_green, g.inventory.gold, ansi_reset });
-        } else {
-            try w.print("  Gold ................... {d}\n\n", .{g.inventory.gold});
+        // Only what the hero actually has is listed.
+        const inv = g.inventory;
+        var empty = true;
+        if (inv.gold > 0) {
+            empty = false;
+            try w.writeAll("  Gold ................... ");
+            try writeAmount(w, color, inv.gold);
+            try w.writeAll("\n\n");
         }
-        try w.writeAll("  (no other items yet)\n\n");
+
+        // Usable items, numbered by position in pick-up order.
+        const items = inv.items();
+        for (items, 1..) |p, number| {
+            const label = switch (p) {
+                .small => "Small potion  (+1 HP)",
+                .medium => "Medium potion (+3 HP)",
+                .large => "Large potion  (+5 HP)",
+            };
+            try w.print("  {d}) {s} ..... x", .{ number, label });
+            try writeAmount(w, color, inv.potionCount(p));
+            try w.writeByte('\n');
+        }
+        if (items.len > 0) {
+            empty = false;
+            try w.writeByte('\n');
+        }
+
+        if (empty) try w.writeAll("  (empty)\n\n");
         try w.writeAll("===============================\n");
+        if (items.len == 1) {
+            try w.writeAll("[1] use (uses a turn)   ");
+        } else if (items.len > 1) {
+            try w.print("[1-{d}] use (uses a turn)   ", .{items.len});
+        }
         try w.writeAll("[Enter] close\n> ");
+    }
+
+    /// A quantity in the inventory, green when colors are on.
+    fn writeAmount(w: *std.Io.Writer, color: bool, n: u32) std.Io.Writer.Error!void {
+        if (color) {
+            try w.print("{s}{d}{s}", .{ ansi_green, n, ansi_reset });
+        } else {
+            try w.print("{d}", .{n});
+        }
     }
 };
 
@@ -755,6 +934,12 @@ test "parseCommand handles keys, uppercase and \\r" {
     try testing.expectEqual(Command.wait, parseCommand(".").?);
     try testing.expectEqual(Command.quit, parseCommand("q").?);
     try testing.expectEqual(Command.inventory, parseCommand("i").?);
+    try testing.expectEqual(Command.use_1, parseCommand("1").?);
+    try testing.expectEqual(Command.use_3, parseCommand("3").?);
+    try testing.expectEqual(Command.use_9, parseCommand("9").?);
+    try testing.expectEqual(@as(?usize, 0), Command.use_1.slot());
+    try testing.expectEqual(@as(?usize, 8), Command.use_9.slot());
+    try testing.expectEqual(@as(?usize, null), Command.wait.slot());
     try testing.expectEqual(Command.inventory, parseCommand("I\r").?);
     try testing.expectEqual(@as(?Command, null), parseCommand(""));
     try testing.expectEqual(@as(?Command, null), parseCommand("x"));
@@ -926,13 +1111,179 @@ test "inventory screen lists the gold" {
     const plain = w.buffered();
     try testing.expect(std.mem.indexOf(u8, plain, "INVENTORY") != null);
     try testing.expect(std.mem.indexOf(u8, plain, "Gold ................... 30") != null);
-    try testing.expect(std.mem.indexOf(u8, plain, "(no other items yet)") != null);
     try testing.expect(std.mem.indexOf(u8, plain, "[Enter] close") != null);
     try testing.expect(std.mem.indexOfScalar(u8, plain, 0x1b) == null);
 
     var cw: std.Io.Writer = .fixed(&buf);
     try g.renderInventory(&cw, true);
     try testing.expect(std.mem.indexOf(u8, cw.buffered(), ansi_green ++ "30" ++ ansi_reset) != null);
+}
+
+test "inventory lists items in pick-up order, numbered from 1" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    // Picked up: medium, then small, then another medium.
+    g.inventory.add(.medium);
+    g.inventory.add(.small);
+    g.inventory.add(.medium);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "1) Medium potion (+3 HP) ..... x2") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "2) Small potion  (+1 HP) ..... x1") != null);
+    // Items the hero does not have are not listed.
+    try testing.expect(std.mem.indexOf(u8, out, "Large potion") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "[1-2] use") != null);
+}
+
+test "when an item runs out the ones below move up" {
+    var inv: Inventory = .{};
+    inv.add(.large);
+    inv.add(.small);
+    inv.add(.medium);
+    try testing.expectEqualSlices(Potion, &.{ .large, .small, .medium }, inv.items());
+
+    inv.remove(.large); // the first one runs out
+    try testing.expectEqualSlices(Potion, &.{ .small, .medium }, inv.items());
+    try testing.expectEqual(@as(?Potion, .small), inv.itemAt(0)); // now number 1
+
+    inv.add(.large); // back again: goes to the end, with the next number
+    try testing.expectEqualSlices(Potion, &.{ .small, .medium, .large }, inv.items());
+
+    inv.add(.small); // a kind already listed keeps its place
+    inv.remove(.small); // still has one left: stays listed
+    try testing.expectEqualSlices(Potion, &.{ .small, .medium, .large }, inv.items());
+    try testing.expectEqual(@as(?Potion, null), inv.itemAt(3));
+}
+
+test "inventory hides zero gold and shows (empty) when there is nothing" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    var out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "(empty)") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "Gold .") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "use (uses a turn)") == null);
+
+    // Only a large potion: it is number 1.
+    g.inventory.add(.large);
+    w = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "1) Large potion  (+5 HP) ..... x1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "[1] use") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "(empty)") == null);
+}
+
+test "potion sizes: small 50%, medium 35%, large 15%" {
+    var counts: [Potion.count]usize = @splat(0);
+    for (0..100) |r| counts[Potion.fromRoll(@intCast(r)).index()] += 1;
+    try testing.expectEqual([Potion.count]usize{ 50, 35, 15 }, counts);
+    try testing.expectEqual(@as(i32, 1), Potion.small.heal());
+    try testing.expectEqual(@as(i32, 3), Potion.medium.heal());
+    try testing.expectEqual(@as(i32, 5), Potion.large.heal());
+}
+
+/// Open floor with a chest right of the hero.
+const chest_layout: Layout = .{
+    "##############################",
+    "#@&..........................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "##############################",
+};
+
+test "about half of the chests hold a potion, and then no gold" {
+    var with_potion: usize = 0;
+    const trials = 1000;
+    for (0..trials) |seed| {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, chest_layout);
+        g.step(.right);
+        if (g.chest_potion) |p| {
+            with_potion += 1;
+            try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(p));
+            try testing.expectEqualSlices(Potion, &.{p}, g.inventory.items());
+            // Only the item: no gold with it.
+            try testing.expectEqual(@as(u32, 0), g.chest_gold);
+            try testing.expectEqual(@as(u32, 0), g.inventory.gold);
+            // The message names the potion, without gold.
+            var buf: [4096]u8 = undefined;
+            var expected: [32]u8 = undefined;
+            const text = try std.fmt.bufPrint(&expected, "({s} potion)", .{@tagName(p)});
+            const out = try renderToBuf(&g, &buf, .{});
+            try testing.expect(std.mem.indexOf(u8, out, text) != null);
+            try testing.expect(std.mem.indexOf(u8, out, "gold)") == null);
+        } else {
+            try testing.expectEqual([Potion.count]u32{ 0, 0, 0 }, g.inventory.potions);
+            try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
+            try testing.expect(g.chest_gold >= chest_gold_min);
+        }
+    }
+    try testing.expect(with_potion >= 400 and with_potion <= 600);
+}
+
+test "drinking heals, caps at max HP and uses a turn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout); // a monster is next to the hero
+    g.hp = 4;
+    g.inventory.add(.medium); // number 1
+    g.inventory.add(.large); // number 2
+
+    g.step(.use_1);
+    try testing.expectEqual(@as(i32, 3), g.healed);
+    try testing.expect(g.events.drink);
+    try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.medium));
+    // 4 + 3, then the adjacent monster bites: the turn passed.
+    try testing.expectEqual(@as(i32, 4 + 3 - monster_damage), g.hp);
+    // The medium potion ran out, so the large one is now number 1.
+    try testing.expectEqual(@as(?Potion, .large), g.inventory.itemAt(0));
+
+    g.hp = 8;
+    g.step(.use_1);
+    try testing.expectEqual(@as(i32, 2), g.healed); // capped at max_hp
+    try testing.expectEqual(@as(i32, max_hp - monster_damage), g.hp);
+
+    var buf: [4096]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "(+2 HP)") != null);
+
+    // Next turn the drink state is cleared.
+    g.step(.left);
+    try testing.expectEqual(@as(i32, 0), g.healed);
+    try testing.expect(!g.events.drink);
+}
+
+test "using a number with no item uses no turn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.hp = 5;
+    g.inventory.add(.small);
+    g.step(.use_2); // only number 1 exists
+    try testing.expectEqualStrings("You have no item with that number.", g.message);
+    try testing.expectEqual(@as(i32, 5), g.hp); // the adjacent monster did not bite
+    try testing.expect(!g.events.drink);
+    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.small));
+}
+
+test "drinking at full health keeps the potion and uses no turn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.small);
+    g.step(.use_1);
+    try testing.expectEqualStrings("You are already at full health.", g.message);
+    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.small));
+    try testing.expectEqual(@as(i32, max_hp), g.hp);
 }
 
 test "map help mentions the inventory key" {
@@ -1035,27 +1386,24 @@ test "about a quarter of the item spots are chests" {
     try testing.expect(percent >= 15 and percent <= 35);
 }
 
-test "opening a chest gives 20 to 50 gold" {
-    var prng = std.Random.DefaultPrng.init(1);
-    var g = testGame(&prng, .{
-        "##############################",
-        "#@&..........................#",
-        "#............................#",
-        "#............................#",
-        "#............................#",
-        "#............................#",
-        "#............................#",
-        "#............................#",
-        "#............................#",
-        "#............................#",
-        "#............................#",
-        "##############################",
-    });
+test "a chest without a potion gives 20 to 50 gold" {
+    // Find a seed whose chest holds gold (half of them hold a potion).
+    var seed: u64 = 0;
+    var prng = std.Random.DefaultPrng.init(seed);
+    var g = testGame(&prng, chest_layout);
     g.inventory.gold = 5;
     g.step(.right);
+    while (g.chest_potion != null) {
+        seed += 1;
+        prng = std.Random.DefaultPrng.init(seed);
+        g = testGame(&prng, chest_layout);
+        g.inventory.gold = 5;
+        g.step(.right);
+    }
     try testing.expectEqual(Pos{ .x = 2, .y = 1 }, g.hero);
     try testing.expect(g.chest_gold >= chest_gold_min and g.chest_gold <= chest_gold_max);
     try testing.expectEqual(5 + g.chest_gold, g.inventory.gold);
+    try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
     try testing.expectEqual(Tile.floor, g.tileAt(g.hero));
     try testing.expectEqual(Events{ .chest = true }, g.events);
     try testing.expectEqualStrings("You open the chest!", g.message);

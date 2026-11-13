@@ -38,28 +38,24 @@ pub fn main(init: std.process.Init) !void {
         const line = try in.takeDelimiter('\n') orelse break; // EOF (Ctrl+Z / end of pipe)
         if (dungeon.parseCommand(line)) |cmd| {
             if (cmd == .inventory) {
-                // A pause screen: no turn passes. Any line closes it.
+                // A pause screen: looking uses no turn. A number uses that item
+                // (which does use a turn); anything else just closes it.
                 try out.writeAll("\x1b[2J\x1b[H");
                 try game.renderInventory(out, true);
                 try out.flush();
-                _ = try in.takeDelimiter('\n') orelse break;
+                const choice = try in.takeDelimiter('\n') orelse break;
+                if (dungeon.parseCommand(choice)) |c| {
+                    if (c.slot() != null) {
+                        game.step(c);
+                        try afterTurn(io, out, &game);
+                    }
+                }
                 continue;
             }
             game.step(cmd);
-            if (game.events.gold) playSfx(.gold);
-            if (game.events.chest) playSfx(.chest);
-            if (game.events.stairs) playSfx(.stairs);
-            // Same order as the turn: the hero's strike, then the monsters' bites.
-            if (game.hit_pos != null) {
-                playSfx(if (game.hit_killed) .kill else .strike);
-                try playStrikeEffect(io, out, &game);
-            }
-            if (game.damage_taken > 0) {
-                playSfx(.hurt);
-                try playHitEffect(io, out, &game);
-            }
+            try afterTurn(io, out, &game);
         } else {
-            game.message = "Invalid command. Use w/a/s/d, ., i or q.";
+            game.message = "Invalid command. Use w/a/s/d, ., i, 1-9 or q.";
         }
     }
 
@@ -91,6 +87,23 @@ fn drawFrame(out: *Io.Writer, game: *const dungeon.Game, opts: dungeon.RenderOpt
     try out.writeAll("\x1b[2J\x1b[H"); // clear the screen (ANSI)
     try game.render(out, frame_opts);
     try out.flush();
+}
+
+/// Plays the sounds and animations for what happened during the last turn.
+fn afterTurn(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
+    if (game.events.gold) playSfx(.gold);
+    if (game.events.chest) playSfx(.chest);
+    if (game.events.drink) playSfx(.drink);
+    if (game.events.stairs) playSfx(.stairs);
+    // Same order as the turn: the hero's strike, then the monsters' bites.
+    if (game.hit_pos != null) {
+        playSfx(if (game.hit_killed) .kill else .strike);
+        try playStrikeEffect(io, out, game);
+    }
+    if (game.damage_taken > 0) {
+        playSfx(.hurt);
+        try playHitEffect(io, out, game);
+    }
 }
 
 /// Short animation when the hero hits a monster: a spark blinks over it.

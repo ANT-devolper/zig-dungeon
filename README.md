@@ -54,6 +54,7 @@ Type a command and press **Enter**:
 | `d` | move right |
 | `.` | wait       |
 | `i` | open the inventory (does not use a turn; Enter closes it) |
+| `1`-`9` | use the item with that number in the inventory (uses a turn), from the inventory or the map |
 | `q` | quit       |
 
 | Symbol | Meaning            |
@@ -61,7 +62,7 @@ Type a command and press **Enter**:
 | `@`    | you, the hero (cyan; red when hurt) |
 | `M`    | monster (red)      |
 | `$`    | gold, +10 (green)  |
-| `&`    | chest, 20-50 gold (magenta) |
+| `&`    | chest: 20-50 gold or a potion (magenta) |
 | `>`    | stairs, your goal (yellow) |
 | `#`    | wall               |
 
@@ -74,7 +75,8 @@ Type a command and press **Enter**:
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).
-- Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and loot tends to hide in dead ends. Each item spot holds gold or, 1 time in 4, a chest worth 20 to 50 gold.
+- Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and loot tends to hide in dead ends. Each item spot holds gold or, 1 time in 4, a chest. A chest holds either 20 to 50 gold or a healing potion.
+- Half of the chests hold a healing potion instead of gold (never both): small (+1 HP, 50%), medium (+3 HP, 35%) or large (+5 HP, 15%). Potions go to your inventory, which numbers items in the order you picked them up. When an item runs out, the ones below move up, so the numbers are always 1, 2, 3... Drinking uses a turn and never heals past 10 HP. Typing a number with no item, or drinking at full health, uses no turn.
 - Take the stairs on level 3 and you **win**. If your HP reaches 0, you **lose**.
 
 ## Sound
