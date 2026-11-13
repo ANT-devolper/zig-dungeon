@@ -72,6 +72,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 - You start with **10 HP**.
 - Walk into a monster to attack it. Each hit deals 2 damage and monsters have 3 HP, so it takes two hits. A hit makes the monster blink with a `*`, or with an `X` when it dies.
 - You only see what is in your line of sight, up to 5 tiles away, and walls block your view. Outside it the maze is drawn in light gray, and monsters, gold and the stairs are hidden.
+- Defeat every monster on a level and the stairs are revealed: they show on the map from anywhere until you go down.
 - Monsters within 6 tiles chase you. Farther away, they wander around at random. A monster next to you bites for 1 damage per turn.
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.

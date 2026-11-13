@@ -4,6 +4,7 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-13 | When every monster on a level is defeated, the stairs show through the field of view until the next level. Only the stairs, not gold or chests. | User request: a reward for clearing a level. | `stairsRevealed`, [features/fov.md](features/fov.md) |
 | 2026-11-13 | Claude never runs `git push`; the user pushes. | User rule. | [workflow.md](workflow.md) |
 | 2026-11-13 | `.gitattributes` forces LF line endings for the whole repo; the global git config stays untouched. | `core.autocrlf=true` rewrote files with CRLF and broke `zig fmt --check`. | `.gitattributes` |
 | 2026-11-13 | Project memory lives in `docs/memory/` (Markdown, in the repo). It is read before the code and updated in the same commit as every change. Details moved out of `CLAUDE.md`. | The ai-memory server was down, so there was no durable memory between sessions. | `docs/memory/`, `CLAUDE.md` |

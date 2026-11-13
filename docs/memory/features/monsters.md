@@ -8,5 +8,6 @@ Code: `monstersTurn`, `moveMonsterToward`, `wander`, `isFreeForMonster`, `Monste
   - **Otherwise:** `wander_chance` (30%) per round to step in a random free direction (`wander`).
 - Both kinds of step use `isFreeForMonster`: no wall, no other monster, not the hero.
 - Monsters have `monster_hp` (3). The hero hits for `attackDamage()` (2, plus any strength bonus), so a plain monster dies in 2 hits.
+- Killing the last monster of a level reveals the stairs through the field of view (see [fov.md](fov.md)).
 - Count per level: `min(max_monsters, 1 + 2 * level)` = 3, 5, 7.
 - Colors: red; blue while time is stopped (`ansi_blue`); white on red for the one that just bit (`ansi_bite`).

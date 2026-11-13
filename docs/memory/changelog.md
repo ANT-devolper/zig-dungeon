@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-13
 
-- `(this commit)` build: force LF line endings with .gitattributes. Fixes `zig fmt --check` failing and files showing as modified after a checkout (`core.autocrlf=true`). ([backlog](backlog.md) item closed)
+- `(this commit)` feat: reveal the stairs once every monster on the level is defeated. ([fov](features/fov.md), [monsters](features/monsters.md))
+- `d4be073` build: force LF line endings with .gitattributes. Fixes `zig fmt --check` failing and files showing as modified after a checkout (`core.autocrlf=true`). ([backlog](backlog.md) item closed)
 - `7f98ae6` docs: add a durable project memory in docs/memory. Created this folder; moved the per-system details out of `CLAUDE.md`; added the decisions, changelog, workflow and backlog logs.
 - `0699960` docs: require a body in every commit message.
 - `b4a5603` feat: add a vision potion that reveals the whole map for 3 rounds. ([potions](features/potions.md), [fov](features/fov.md), [rounds](features/rounds.md), [sound](features/sound.md))

@@ -662,7 +662,10 @@ pub const Game = struct {
                     if (g.monsters[i].hp <= 0) {
                         g.removeMonster(i);
                         g.hit_killed = true;
-                        g.message = "You defeated a monster!";
+                        g.message = if (g.stairsRevealed())
+                            "You defeated the last monster! The stairs are revealed."
+                        else
+                            "You defeated a monster!";
                     } else {
                         g.message = "You hit the monster.";
                     }
@@ -770,6 +773,11 @@ pub const Game = struct {
     /// True while the hero sees the whole map (vision potion).
     pub fn hasVision(g: *const Game) bool {
         return g.vision > 0;
+    }
+
+    /// The stairs show through the field of view once the level is cleared.
+    pub fn stairsRevealed(g: *const Game) bool {
+        return g.monster_count == 0;
     }
 
     /// True while the hero is fast (speed potion).
@@ -956,7 +964,11 @@ pub const Game = struct {
                 const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
                 // Color to wrap this cell with, if any.
                 var color: ?[]const u8 = null;
-                const visible = if (seen) |s| s[y][x] else true;
+                // Once every monster is defeated, the stairs show from anywhere.
+                const visible = if (seen) |s|
+                    s[y][x] or (g.map[y][x] == .stairs and g.stairsRevealed())
+                else
+                    true;
                 const sparkling = opts.spark and g.hit_pos != null and g.hit_pos.?.eql(p);
                 const c: u8 = if (!visible) blk: {
                     // Out of sight: only the maze's shape, dimmed.
@@ -1549,7 +1561,7 @@ test "vision shows the whole map for the drink round plus 3, then fov comes back
         "#............................#",
         "#............................#",
         "#............................#",
-        "#............................#",
+        "#...........................M#", // not cleared: the stairs can hide
         "##############################",
     });
     const gold: Pos = .{ .x = 25, .y = 1 };
@@ -2319,6 +2331,62 @@ test "fov render hides what is out of sight" {
     try testing.expectEqual(@as(u8, 'M'), cellAt(near, .{ .x = 25, .y = 1 }, 1));
     try testing.expectEqual(@as(u8, '$'), cellAt(near, .{ .x = 26, .y = 1 }, 1));
     try testing.expectEqual(@as(u8, '>'), cellAt(near, .{ .x = 27, .y = 1 }, 1));
+}
+
+test "the stairs show through the fov once every monster is defeated" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, .{
+        "##############################",
+        "#@M.......................$>.#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "##############################",
+    });
+    var buf: [8192]u8 = undefined;
+    const before = try renderToBuf(&g, &buf, .{ .fov = true });
+    try testing.expectEqual(@as(u8, '.'), cellAt(before, .{ .x = 27, .y = 1 }, 1));
+    g.monsters[0].hp = 1; // one hit kills it
+    g.step(.right);
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+    const after = try renderToBuf(&g, &buf, .{ .fov = true });
+    try testing.expectEqual(@as(u8, '>'), cellAt(after, .{ .x = 27, .y = 1 }, 1));
+    // Only the stairs: far gold stays hidden.
+    try testing.expectEqual(@as(u8, '.'), cellAt(after, .{ .x = 26, .y = 1 }, 1));
+}
+
+test "killing the last monster says the stairs are revealed" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, .{
+        "##############################",
+        "#.M.........................>#",
+        "#@...........................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "##############################",
+    });
+    // Add a far one by hand: it cannot bite yet.
+    g.addMonster(.{ .x = 28, .y = 10 });
+    for (g.monsters[0..g.monster_count]) |*m| m.hp = 1;
+    g.hero = .{ .x = 2, .y = 2 };
+    g.step(.up);
+    try testing.expectEqualStrings("You defeated a monster!", g.message);
+    // Bring the other one next to the hero and kill it too.
+    g.monsters[0].pos = g.hero.add(.{ .x = 0, .y = 1 });
+    g.step(.down);
+    try testing.expectEqualStrings("You defeated the last monster! The stairs are revealed.", g.message);
 }
 
 test "fov color render dims tiles out of sight" {
