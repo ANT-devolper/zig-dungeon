@@ -37,13 +37,20 @@ pub fn main(init: std.process.Init) !void {
     var in_file: Io.File.Reader = .init(.stdin(), io, &in_buf);
     const in = &in_file.interface;
 
+    // Play on the alternate screen, which has no scrollback, so the frames
+    // leave no history in the terminal. Leaving it restores the terminal.
+    try out.writeAll(alt_screen_on);
+    try out.flush();
+    errdefer leaveScreen(out) catch {};
+
     while (game.state == .playing) {
         try drawFrame(out, &game, .{ .color = true });
 
         const key = try readKey(in) orelse break; // EOF (Ctrl+Z / end of file)
         // Enter, space and tab do nothing on the map.
         if (std.ascii.isWhitespace(key)) continue;
-        if (dungeon.parseCommand(&.{key})) |cmd| {
+        // Ctrl+C quits through the normal path, so the terminal is restored.
+        if (dungeon.parseCommand(&.{if (key == ctrl_c) 'q' else key})) |cmd| {
             if (cmd == .inventory) {
                 // A pause screen: looking uses no turn. A number uses that item
                 // (which does use a turn); any other key just closes it.
@@ -51,6 +58,10 @@ pub fn main(init: std.process.Init) !void {
                 try game.renderInventory(out, true);
                 try out.flush();
                 const choice = try readKey(in) orelse break;
+                if (choice == ctrl_c) {
+                    game.step(.quit);
+                    continue;
+                }
                 if (dungeon.parseCommand(&.{choice})) |c| {
                     if (c.slot() != null) {
                         game.step(c);
@@ -66,7 +77,11 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    try drawFrame(out, &game, .{ .color = true });
+    // Back on the normal screen, print only the last frame and the score, so
+    // the result stays visible after the game exits. No clear here: the
+    // terminal's earlier text stays where it was.
+    try leaveScreen(out);
+    try game.render(out, .{ .color = true, .fov = true });
     try out.print("\nFinal score: {d} gold, level {d}.\n", .{ game.inventory.gold, game.level });
     try out.flush();
 
@@ -80,6 +95,18 @@ pub fn main(init: std.process.Init) !void {
         playSfx(sfx);
         if (!muted) try io.sleep(Io.Duration.fromMilliseconds(900), .awake);
     }
+}
+
+/// Enters the alternate screen and hides the cursor (there is no prompt).
+const alt_screen_on = "\x1b[?1049h\x1b[?25l";
+/// Shows the cursor and goes back to the normal screen.
+const alt_screen_off = "\x1b[?25h\x1b[?1049l";
+/// Ctrl+C, read as a key because raw mode turns off its signal.
+const ctrl_c = 0x03;
+
+fn leaveScreen(out: *Io.Writer) !void {
+    try out.writeAll(alt_screen_off);
+    try out.flush();
 }
 
 /// Reads one key press. Skips '\n', which only comes from redirected input

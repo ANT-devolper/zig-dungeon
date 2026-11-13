@@ -8,6 +8,7 @@ const builtin = @import("builtin");
 const is_windows = builtin.os.tag == .windows;
 
 const STD_INPUT_HANDLE: u32 = @bitCast(@as(i32, -10));
+const ENABLE_PROCESSED_INPUT: u32 = 0x0001;
 const ENABLE_LINE_INPUT: u32 = 0x0002;
 const ENABLE_ECHO_INPUT: u32 = 0x0004;
 
@@ -31,8 +32,10 @@ pub const RawMode = struct {
             const h = GetStdHandle(STD_INPUT_HANDLE) orelse return .{};
             var mode: u32 = 0;
             if (GetConsoleMode(h, &mode) == 0) return .{};
-            // Keep ENABLE_PROCESSED_INPUT, so Ctrl+C still quits.
-            if (SetConsoleMode(h, mode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT)) == 0) return .{};
+            // Without ENABLE_PROCESSED_INPUT, Ctrl+C arrives as the key 0x03
+            // instead of killing the game, so the game can quit cleanly.
+            const off = ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT;
+            if (SetConsoleMode(h, mode & ~off) == 0) return .{};
             return .{ .saved = .{ .handle = h, .mode = mode } };
         } else {
             const fd = std.posix.STDIN_FILENO;
@@ -40,6 +43,8 @@ pub const RawMode = struct {
             var raw = old;
             raw.lflag.ICANON = false;
             raw.lflag.ECHO = false;
+            // Ctrl+C arrives as the key 0x03 instead of a signal.
+            raw.lflag.ISIG = false;
             // Enter sends '\r', like the Windows console.
             raw.iflag.ICRNL = false;
             raw.cc[@backingInt(std.posix.V.MIN)] = 1;

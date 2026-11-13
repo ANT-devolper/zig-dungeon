@@ -43,6 +43,8 @@ zig build -Doptimize=ReleaseFast  # optimized build
 
 ## How to play
 
+The game takes over the whole terminal window while you play, so moves leave no history behind. When it ends, only the last screen and your score stay in the terminal.
+
 Press a key. It acts at once, with no need to press **Enter**:
 
 | Key | Action     |
@@ -54,7 +56,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `.` | wait       |
 | `i` | open the inventory (does not use a turn; any key other than a number closes it) |
 | `1`-`9` | use the item with that number in the inventory (uses a turn), from the inventory or the map |
-| `q` | quit       |
+| `q` | quit (Ctrl+C also quits) |
 
 | Symbol | Meaning            |
 |--------|--------------------|
