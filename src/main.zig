@@ -95,6 +95,7 @@ fn afterTurn(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
     if (game.events.chest) playSfx(.chest);
     if (game.events.drink) playSfx(.drink);
     if (game.events.time_stop) playSfx(.time_stop);
+    if (game.events.speed) playSfx(.speed);
     if (game.events.stairs) playSfx(.stairs);
     // Same order as the turn: the hero's strike, then the monsters' bites.
     if (game.hit_pos != null) {

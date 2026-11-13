@@ -23,29 +23,34 @@ const chest_potion_chance = 50;
 const time_stop_chance = 10;
 /// Free turns the monsters stay frozen after drinking time stop.
 pub const time_stop_turns = 3;
+/// Chance (in %) that a chest's potion is a speed potion.
+const speed_chance = 15;
+/// Rounds the hero stays fast (2 actions per round) after drinking speed.
+pub const speed_turns = 10;
 
-/// Potion kinds the hero can carry: three sizes of health potion and the
-/// time stop potion, which is a single kind with no sizes.
+/// Potion kinds the hero can carry: three sizes of health potion, plus the
+/// time stop and speed potions, which are single kinds with no sizes.
 pub const Potion = enum {
     small,
     medium,
     large,
     time_stop,
+    speed,
 
-    pub const count = 4;
+    pub const count = 5;
 
-    /// HP restored (time stop heals nothing).
+    /// HP restored (time stop and speed heal nothing).
     pub fn heal(p: Potion) i32 {
         return switch (p) {
             .small => 1,
             .medium => 3,
             .large => 5,
-            .time_stop => 0,
+            .time_stop, .speed => 0,
         };
     }
 
     /// Maps a roll in 0..99 to a health potion size: small 50%,
-    /// medium 35%, large 15%. Never returns `time_stop`.
+    /// medium 35%, large 15%. Never returns `time_stop` or `speed`.
     pub fn fromRoll(roll: u8) Potion {
         if (roll < 50) return .small;
         if (roll < 85) return .medium;
@@ -59,6 +64,7 @@ pub const Potion = enum {
             .medium => "medium health potion",
             .large => "large health potion",
             .time_stop => "time stop potion",
+            .speed => "speed potion",
         };
     }
 
@@ -123,6 +129,7 @@ const ansi_cyan = "\x1b[1;36m";
 const ansi_green = "\x1b[1;32m";
 const ansi_magenta = "\x1b[1;35m";
 const ansi_blue = "\x1b[1;34m"; // frozen monsters (time stop)
+const ansi_fast = "\x1b[1;30;46m"; // black on cyan: the hero while fast (speed)
 const ansi_dim = "\x1b[38;5;248m"; // light gray: out of sight
 const ansi_bite = "\x1b[1;37;41m"; // white on red: the monster that just bit
 const ansi_red_bg = "\x1b[41m";
@@ -223,6 +230,7 @@ pub const Events = struct {
     chest: bool = false,
     drink: bool = false,
     time_stop: bool = false,
+    speed: bool = false,
     stairs: bool = false,
     won: bool = false,
     lost: bool = false,
@@ -297,6 +305,12 @@ pub const Game = struct {
     healed: i32 = 0,
     /// Free turns left with the monsters frozen by a time stop potion.
     time_stop: u8 = 0,
+    /// Time stop was drunk during the current round, which does not count.
+    time_stop_fresh: bool = false,
+    /// Rounds left with the hero fast (speed potion).
+    speed: u8 = 0,
+    /// A fast hero already used the first of the 2 actions of this round.
+    half_round: bool = false,
     events: Events = .{},
     rng: std.Random,
 
@@ -621,8 +635,11 @@ pub const Game = struct {
                         g.events.chest = true;
                         // A chest holds either a potion or gold, never both.
                         if (g.rng.uintLessThan(u8, 100) < chest_potion_chance) {
-                            const kind: Potion = if (g.rng.uintLessThan(u8, 100) < time_stop_chance)
+                            const roll = g.rng.uintLessThan(u8, 100);
+                            const kind: Potion = if (roll < time_stop_chance)
                                 .time_stop
+                            else if (roll < time_stop_chance + speed_chance)
+                                .speed
                             else
                                 Potion.fromRoll(g.rng.uintLessThan(u8, 100));
                             g.inventory.add(kind);
@@ -646,24 +663,44 @@ pub const Game = struct {
                             g.events.stairs = true;
                             g.message = "You go down the stairs...";
                         }
+                        g.half_round = false; // a new level starts a new round
                         return; // new level: monsters do not act this turn
                     },
                 }
             },
         }
 
-        if (g.events.time_stop) {
-            // Just drank time stop: frozen this turn, the counter starts next turn.
-        } else if (g.time_stop > 0) {
-            g.time_stop -= 1; // a free turn: the monsters stay frozen
-        } else {
-            g.monstersTurn();
+        // World rounds: a fast hero (speed) gets 2 actions per round; the
+        // monsters and every effect counter advance once per round.
+        if (g.speed > 0 and !g.half_round) {
+            g.half_round = true; // first action of the round: the world waits
+            return;
         }
+        g.half_round = false;
+        g.endRound();
+    }
+
+    /// The world's part of a round: effect counters tick and, unless time
+    /// is stopped, the monsters act.
+    fn endRound(g: *Game) void {
+        const frozen = g.time_stop > 0;
+        if (g.time_stop_fresh) {
+            g.time_stop_fresh = false; // the round it was drunk in is free
+        } else if (g.time_stop > 0) {
+            g.time_stop -= 1;
+        }
+        if (g.speed > 0) g.speed -= 1;
+        if (!frozen) g.monstersTurn();
     }
 
     /// True while the monsters are frozen by a time stop potion.
     pub fn timeStopped(g: *const Game) bool {
-        return g.time_stop > 0 or g.events.time_stop;
+        return g.time_stop > 0;
+    }
+
+    /// True while the hero is fast (speed potion).
+    pub fn isFast(g: *const Game) bool {
+        return g.speed > 0;
     }
 
     /// Drinks a potion the hero carries. Returns false (and uses no turn)
@@ -672,8 +709,16 @@ pub const Game = struct {
         if (kind == .time_stop) {
             g.inventory.remove(kind);
             g.time_stop = time_stop_turns; // drinking again resets, never adds
+            g.time_stop_fresh = true;
             g.events.time_stop = true;
             g.message = "Time stops! The monsters are frozen.";
+            return true;
+        }
+        if (kind == .speed) {
+            g.inventory.remove(kind);
+            g.speed = speed_turns; // drinking again resets, never adds
+            g.events.speed = true;
+            g.message = "You feel fast!";
             return true;
         }
         if (g.hp >= max_hp) {
@@ -690,7 +735,7 @@ pub const Game = struct {
             .small => "You drink a small health potion.",
             .medium => "You drink a medium health potion.",
             .large => "You drink a large health potion.",
-            .time_stop => unreachable, // handled above
+            .time_stop, .speed => unreachable, // handled above
         };
         return true;
     }
@@ -826,7 +871,7 @@ pub const Game = struct {
                     break :blk if (g.hit_killed) 'X' else '*';
                 } else if (p.eql(g.hero)) blk: {
                     // The hero always stands out: cyan, or red when just hurt.
-                    color = if (hurt) ansi_red else ansi_cyan;
+                    color = if (hurt) ansi_red else if (g.isFast()) ansi_fast else ansi_cyan;
                     break :blk '@';
                 } else if (g.monsterAt(p)) |i| blk: {
                     color = if (g.timeStopped())
@@ -897,6 +942,7 @@ pub const Game = struct {
             g.level, last_level, g.hp, max_hp, g.inventory.gold,
         });
         if (g.time_stop > 0) try w.print("   TIME STOP {d}", .{g.time_stop});
+        if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
         try w.writeAll("\n\n");
     }
 
@@ -922,6 +968,7 @@ pub const Game = struct {
                 .medium => "Medium health potion (+3 HP)",
                 .large => "Large health potion  (+5 HP)",
                 .time_stop => "Time stop potion     (3 turns)",
+                .speed => "Speed potion         (10 turns)",
             };
             try w.print("  {d}) {s} ..... x", .{ number, label });
             try writeAmount(w, color, inv.potionCount(p));
@@ -1236,16 +1283,17 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.fromRoll(@intCast(r)).index()] += 1;
     // Time stop has no sizes: it never comes out of the size roll.
-    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.small.heal());
     try testing.expectEqual(@as(i32, 3), Potion.medium.heal());
     try testing.expectEqual(@as(i32, 5), Potion.large.heal());
     try testing.expectEqual(@as(i32, 0), Potion.time_stop.heal());
 }
 
-test "about 10% of chest potions are time stop" {
+test "chest potions: about 10% time stop and 15% speed" {
     var potions: usize = 0;
     var time_stops: usize = 0;
+    var speeds: usize = 0;
     var seed: u64 = 0;
     while (potions < 2000) : (seed += 1) {
         var prng = std.Random.DefaultPrng.init(seed);
@@ -1253,9 +1301,124 @@ test "about 10% of chest potions are time stop" {
         g.step(.right);
         const p = g.chest_potion orelse continue;
         potions += 1;
-        if (p == .time_stop) time_stops += 1;
+        switch (p) {
+            .time_stop => time_stops += 1,
+            .speed => speeds += 1,
+            else => {},
+        }
     }
     try testing.expect(time_stops >= 100 and time_stops <= 300); // 5%..15%
+    try testing.expect(speeds >= 200 and speeds <= 400); // 10%..20%
+}
+
+test "speed works at full health and shows its counter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.speed);
+    g.step(.use_1);
+    try testing.expect(g.events.speed);
+    try testing.expectEqualStrings("You feel fast!", g.message);
+    try testing.expectEqual(@as(u8, speed_turns), g.speed);
+    try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.speed));
+    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    var buf: [8192]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "SPEED 10") != null);
+}
+
+test "speed gives 2 actions per round for 10 rounds (20 actions)" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout); // a monster is next to the hero
+    g.inventory.add(.speed);
+    g.step(.use_1); // action 1: the first half of a round, nobody bites
+    try testing.expectEqual(@as(i32, max_hp), g.hp);
+
+    var bites: i32 = 0;
+    for (2..21) |action| { // actions 2..20
+        g.hp = max_hp - 1; // keep the hero alive and comparable
+        g.step(.wait);
+        const bitten = g.hp < max_hp - 1;
+        if (bitten) bites += 1;
+        // The round closes (and the monster acts) only on even actions.
+        try testing.expectEqual(action % 2 == 0, bitten);
+        if (action % 2 == 0) {
+            try testing.expectEqual(@as(u8, @intCast(speed_turns - action / 2)), g.speed);
+        }
+    }
+    try testing.expectEqual(@as(i32, 10), bites);
+    try testing.expectEqual(@as(u8, 0), g.speed);
+
+    // Back to normal: every action is a full round, every one bites.
+    for (0..2) |_| {
+        g.hp = 5;
+        g.step(.wait);
+        try testing.expectEqual(@as(i32, 5 - monster_damage), g.hp);
+    }
+}
+
+test "speed and time stop combine: time stop counts rounds, not actions" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout); // a monster is next to the hero
+    g.hp = 5;
+    g.inventory.add(.speed); // number 1
+    g.inventory.add(.time_stop); // number 2
+    g.step(.use_1); // action 1: speed (first half of the round)
+    g.step(.use_1); // action 2: time stop is now number 1; the round closes
+    try testing.expectEqual(@as(u8, time_stop_turns), g.time_stop);
+
+    // Actions 3..8: the time stop counter only drops on even actions.
+    const expected = [_]u8{ 3, 2, 2, 1, 1, 0 };
+    for (expected) |left| {
+        g.step(.wait);
+        try testing.expectEqual(left, g.time_stop);
+        try testing.expectEqual(@as(i32, 5), g.hp); // frozen: no bite
+    }
+    g.step(.wait); // action 9: first half of a round
+    try testing.expectEqual(@as(i32, 5), g.hp);
+    g.step(.wait); // action 10: the round closes and time runs again
+    try testing.expectEqual(@as(i32, 5 - monster_damage), g.hp);
+}
+
+test "time stop drunk in the first half of a fast round still gives 3 free rounds" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.hp = 5;
+    g.inventory.add(.speed);
+    g.inventory.add(.time_stop);
+    g.step(.use_1); // action 1: speed, first half
+    g.step(.wait); // action 2: closes the round (the monster bites here)
+    g.hp = 5;
+    g.step(.use_1); // action 3: time stop in the first half of a round
+    // Frozen rounds: (3,4) where it was drunk, then (5,6), (7,8), (9,10).
+    for (4..12) |_| { // actions 4..11
+        g.step(.wait);
+        try testing.expectEqual(@as(i32, 5), g.hp);
+    }
+    g.step(.wait); // action 12: the round closes with time running
+    try testing.expectEqual(@as(i32, 5 - monster_damage), g.hp);
+}
+
+test "drinking speed again resets the counter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.hp = 1000; // survive the bites
+    g.inventory.add(.speed);
+    g.inventory.add(.speed);
+    g.step(.use_1);
+    for (0..5) |_| g.step(.wait); // 3 rounds closed
+    try testing.expectEqual(@as(u8, speed_turns - 3), g.speed);
+    g.step(.use_1);
+    try testing.expectEqual(@as(u8, speed_turns), g.speed);
+}
+
+test "a fast hero has a cyan background" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout); // nothing next to the hero
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .color = true }), ansi_cyan ++ "@") != null);
+    g.inventory.add(.speed);
+    g.step(.use_1);
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_fast ++ "@" ++ ansi_reset) != null);
 }
 
 test "time stop freezes monsters on the drink turn and 3 more" {
@@ -1339,6 +1502,19 @@ test "time stop shows blue monsters and a header counter" {
     try testing.expect(std.mem.indexOf(u8, out, "TIME STOP 3") != null);
 }
 
+test "inventory lists the speed potion in pick-up order" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.speed);
+    g.inventory.add(.large);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "1) Speed potion         (10 turns) ..... x1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "2) Large health potion  (+5 HP) ..... x1") != null);
+}
+
 test "inventory lists the time stop potion without a size" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, test_layout);
@@ -1390,7 +1566,7 @@ test "about half of the chests hold a potion, and then no gold" {
             try testing.expect(std.mem.indexOf(u8, out, text) != null);
             try testing.expect(std.mem.indexOf(u8, out, "gold)") == null);
         } else {
-            try testing.expectEqual([Potion.count]u32{ 0, 0, 0, 0 }, g.inventory.potions);
+            try testing.expectEqual([Potion.count]u32{ 0, 0, 0, 0, 0 }, g.inventory.potions);
             try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
             try testing.expect(g.chest_gold >= chest_gold_min);
         }
