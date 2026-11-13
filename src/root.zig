@@ -55,13 +55,20 @@ pub const RenderOptions = struct {
     /// Draw the strike spark where the hero's attack landed this turn:
     /// '*' on a wounded monster, 'X' where a monster was killed.
     spark: bool = false,
+    /// Field of view: tiles the hero cannot see are drawn dimmed, as plain
+    /// wall or floor, hiding monsters, gold and the stairs.
+    fov: bool = false,
 };
+
+/// How far the hero can see, in tiles (walls also block the view).
+pub const view_radius = 5;
 
 const ansi_reset = "\x1b[0m";
 const ansi_red = "\x1b[1;31m";
 const ansi_yellow = "\x1b[1;33m";
 const ansi_cyan = "\x1b[1;36m";
 const ansi_green = "\x1b[1;32m";
+const ansi_dim = "\x1b[38;5;248m"; // light gray: out of sight
 const ansi_bite = "\x1b[1;37;41m"; // white on red: the monster that just bit
 const ansi_red_bg = "\x1b[41m";
 const ansi_spark = "\x1b[1;37;45m";
@@ -539,9 +546,56 @@ pub const Game = struct {
         }
     }
 
+    /// Which tiles the hero can see: within `view_radius` (a rounded circle)
+    /// and with no wall in between. Walls that block the view are visible.
+    pub fn visibility(g: *const Game) [H][W]bool {
+        var vis: [H][W]bool = @splat(@splat(false));
+        const r = view_radius;
+        var dy: i32 = -r;
+        while (dy <= r) : (dy += 1) {
+            var dx: i32 = -r;
+            while (dx <= r) : (dx += 1) {
+                if (dx * dx + dy * dy > r * r + r) continue;
+                const p = g.hero.add(.{ .x = dx, .y = dy });
+                if (p.x < 0 or p.y < 0 or p.x >= W or p.y >= H) continue;
+                // Checking both directions smooths out Bresenham's
+                // asymmetric corners.
+                if (g.lineIsClear(g.hero, p) or g.lineIsClear(p, g.hero)) {
+                    vis[@intCast(p.y)][@intCast(p.x)] = true;
+                }
+            }
+        }
+        return vis;
+    }
+
+    /// True if the Bresenham line from `a` to `b` crosses no wall between
+    /// its two ends (the ends themselves may be walls).
+    fn lineIsClear(g: *const Game, a: Pos, b: Pos) bool {
+        const dx: i32 = @intCast(@abs(b.x - a.x));
+        const dy: i32 = -@as(i32, @intCast(@abs(b.y - a.y)));
+        const sx: i32 = if (a.x < b.x) 1 else -1;
+        const sy: i32 = if (a.y < b.y) 1 else -1;
+        var err = dx + dy;
+        var p = a;
+        while (!p.eql(b)) {
+            if (!p.eql(a) and g.tileAt(p) == .wall) return false;
+            const e2 = 2 * err;
+            if (e2 >= dy) {
+                err += dy;
+                p.x += sx;
+            }
+            if (e2 <= dx) {
+                err += dx;
+                p.y += sy;
+            }
+        }
+        return true;
+    }
+
     /// Draws the game state to any Writer.
     pub fn render(g: *const Game, w: *std.Io.Writer, opts: RenderOptions) std.Io.Writer.Error!void {
         const hurt = g.damage_taken > 0;
+        const seen: ?[H][W]bool = if (opts.fov) g.visibility() else null;
         try w.print("DUNGEON  Level {d}/{d}   HP {d}/{d}   Gold {d}\n\n", .{
             g.level, last_level, g.hp, max_hp, g.gold,
         });
@@ -552,8 +606,13 @@ pub const Game = struct {
                 const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
                 // Color to wrap this cell with, if any.
                 var color: ?[]const u8 = null;
+                const visible = if (seen) |s| s[y][x] else true;
                 const sparkling = opts.spark and g.hit_pos != null and g.hit_pos.?.eql(p);
-                const c: u8 = if (sparkling) blk: {
+                const c: u8 = if (!visible) blk: {
+                    // Out of sight: only the maze's shape, dimmed.
+                    color = ansi_dim;
+                    break :blk if (g.map[y][x] == .wall) '#' else '.';
+                } else if (sparkling) blk: {
                     color = ansi_spark;
                     break :blk if (g.hit_killed) 'X' else '*';
                 } else if (p.eql(g.hero)) blk: {
@@ -994,6 +1053,111 @@ test "color render highlights the stairs in yellow" {
     const plain = try renderToBuf(&g, &buf, .{});
     try testing.expect(std.mem.indexOfScalar(u8, plain, 0x1b) == null);
     try testing.expect(std.mem.indexOfScalar(u8, plain, '>') != null);
+}
+
+// Open room with the hero at (4,5) and a wall segment at x=10.
+const fov_layout: Layout = .{
+    "##############################",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#...@.....#..................#",
+    "#..........#.................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "##############################",
+};
+
+fn isVisible(vis: [H][W]bool, x: usize, y: usize) bool {
+    return vis[y][x];
+}
+
+test "the hero sees up to view_radius tiles away" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, fov_layout);
+    const vis = g.visibility();
+    try testing.expect(isVisible(vis, 4, 5)); // the hero
+    try testing.expect(isVisible(vis, 4, 0)); // 5 up (the border wall)
+    try testing.expect(isVisible(vis, 9, 5)); // 5 to the right
+    try testing.expect(!isVisible(vis, 4, 11)); // 6 down
+    try testing.expect(!isVisible(vis, 8, 9)); // diagonal 4+4: outside the circle
+}
+
+test "walls block the view but are themselves visible" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fov_layout);
+    g.hero = .{ .x = 7, .y = 5 };
+    const vis = g.visibility();
+    try testing.expect(isVisible(vis, 10, 5)); // the wall
+    try testing.expect(!isVisible(vis, 11, 5)); // right behind it
+    try testing.expect(!isVisible(vis, 12, 5));
+    try testing.expect(isVisible(vis, 9, 5)); // in front of it
+}
+
+test "the hero and open neighbors are always visible in generated mazes" {
+    var seed: u64 = 0;
+    while (seed < 100) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        const g = Game.init(prng.random());
+        const vis = g.visibility();
+        for (0..H) |y| for (0..W) |x| {
+            const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
+            const d = p.add(.{ .x = -g.hero.x, .y = -g.hero.y });
+            if (vis[y][x]) {
+                try testing.expect(d.x * d.x + d.y * d.y <= view_radius * view_radius + view_radius);
+            }
+            if (p.manhattan(g.hero) <= 1) try testing.expect(vis[y][x]);
+        };
+    }
+}
+
+test "fov render hides what is out of sight" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, .{
+        "##############################",
+        "#@.......................M$>.#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "##############################",
+    });
+    var buf: [8192]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .fov = true });
+    // Far monster, gold and stairs are hidden; the maze shape remains.
+    try testing.expectEqual(@as(u8, '.'), cellAt(out, .{ .x = 25, .y = 1 }, 1));
+    try testing.expectEqual(@as(u8, '.'), cellAt(out, .{ .x = 26, .y = 1 }, 1));
+    try testing.expectEqual(@as(u8, '.'), cellAt(out, .{ .x = 27, .y = 1 }, 1));
+    try testing.expectEqual(@as(u8, '#'), cellAt(out, .{ .x = 29, .y = 1 }, 1));
+    try testing.expectEqual(@as(u8, '@'), cellAt(out, g.hero, 1));
+    // Without fov everything is drawn.
+    const all = try renderToBuf(&g, &buf, .{});
+    try testing.expectEqual(@as(u8, 'M'), cellAt(all, .{ .x = 25, .y = 1 }, 1));
+    try testing.expectEqual(@as(u8, '>'), cellAt(all, .{ .x = 27, .y = 1 }, 1));
+    // Once the hero walks close, they show up.
+    g.hero = .{ .x = 22, .y = 1 };
+    const near = try renderToBuf(&g, &buf, .{ .fov = true });
+    try testing.expectEqual(@as(u8, 'M'), cellAt(near, .{ .x = 25, .y = 1 }, 1));
+    try testing.expectEqual(@as(u8, '$'), cellAt(near, .{ .x = 26, .y = 1 }, 1));
+    try testing.expectEqual(@as(u8, '>'), cellAt(near, .{ .x = 27, .y = 1 }, 1));
+}
+
+test "fov color render dims tiles out of sight" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, fov_layout);
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .fov = true, .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_dim ++ "#" ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_dim ++ "." ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_cyan ++ "@" ++ ansi_reset) != null);
 }
 
 test "color render draws gold in green" {

@@ -74,10 +74,13 @@ fn playSfx(sfx: sound.Sfx) void {
     if (!muted) sound.play(bank.get(sfx));
 }
 
-/// Clears the screen and draws one frame.
+/// Clears the screen and draws one frame. The hero's field of view is
+/// always on in the game.
 fn drawFrame(out: *Io.Writer, game: *const dungeon.Game, opts: dungeon.RenderOptions) !void {
+    var frame_opts = opts;
+    frame_opts.fov = true;
     try out.writeAll("\x1b[2J\x1b[H"); // clear the screen (ANSI)
-    try game.render(out, opts);
+    try game.render(out, frame_opts);
     try out.flush();
 }
 
