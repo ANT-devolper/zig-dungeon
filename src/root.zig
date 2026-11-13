@@ -59,6 +59,7 @@ const ansi_reset = "\x1b[0m";
 const ansi_red = "\x1b[1;31m";
 const ansi_yellow = "\x1b[1;33m";
 const ansi_cyan = "\x1b[1;36m";
+const ansi_green = "\x1b[1;32m";
 const ansi_bite = "\x1b[1;37;41m"; // white on red: the monster that just bit
 const ansi_red_bg = "\x1b[41m";
 const ansi_spark = "\x1b[1;37;45m";
@@ -542,7 +543,10 @@ pub const Game = struct {
                 } else switch (g.map[y][x]) {
                     .wall => '#',
                     .floor => '.',
-                    .gold => '$',
+                    .gold => blk: {
+                        color = ansi_green;
+                        break :blk '$';
+                    },
                     .stairs => blk: {
                         color = ansi_yellow; // the goal stands out
                         break :blk '>';
@@ -912,6 +916,14 @@ test "color render highlights the stairs in yellow" {
     const plain = try renderToBuf(&g, &buf, .{});
     try testing.expect(std.mem.indexOfScalar(u8, plain, 0x1b) == null);
     try testing.expect(std.mem.indexOfScalar(u8, plain, '>') != null);
+}
+
+test "color render draws gold in green" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_green ++ "$" ++ ansi_reset) != null);
 }
 
 test "color render draws monsters in red" {

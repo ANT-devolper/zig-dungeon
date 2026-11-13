@@ -59,7 +59,7 @@ Type a command and press **Enter**:
 |--------|--------------------|
 | `@`    | you, the hero (cyan; red when hurt) |
 | `M`    | monster (red)      |
-| `$`    | gold (+10)         |
+| `$`    | gold, +10 (green)  |
 | `>`    | stairs, your goal (yellow) |
 | `#`    | wall               |
 
