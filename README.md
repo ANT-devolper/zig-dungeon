@@ -67,7 +67,7 @@ Type a command and press **Enter**:
 
 - You start with **10 HP**.
 - Walk into a monster to attack it. Each hit deals 2 damage and monsters have 3 HP, so it takes two hits. A hit makes the monster blink with a `*`, or with an `X` when it dies.
-- Monsters within 6 tiles chase you. A monster next to you bites for 1 damage per turn.
+- Monsters within 6 tiles chase you. Farther away, they wander around at random. A monster next to you bites for 1 damage per turn.
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).

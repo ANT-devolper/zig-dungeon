@@ -14,6 +14,8 @@ const monster_hp = 3;
 const monster_damage = 1;
 const gold_value = 10;
 const chase_radius = 6;
+/// Chance (in %) that a monster that is not chasing takes a random step.
+const wander_chance = 30;
 
 pub const Tile = enum { wall, floor, gold, stairs };
 
@@ -492,8 +494,29 @@ pub const Game = struct {
                 }
             } else if (dist <= chase_radius) {
                 g.moveMonsterToward(m, g.hero);
+            } else if (g.rng.uintLessThan(u8, 100) < wander_chance) {
+                g.wander(m);
             }
         }
+    }
+
+    /// Takes one step in a random free direction (or stays put if boxed in).
+    fn wander(g: *Game, m: *Monster) void {
+        var options: [directions.len]Pos = undefined;
+        var n: usize = 0;
+        for (directions) |d| {
+            const next = m.pos.add(d);
+            if (g.isFreeForMonster(next)) {
+                options[n] = next;
+                n += 1;
+            }
+        }
+        if (n > 0) m.pos = options[g.rng.uintLessThan(usize, n)];
+    }
+
+    /// A tile a monster may step on: no wall, no other monster, not the hero.
+    fn isFreeForMonster(g: *const Game, p: Pos) bool {
+        return g.tileAt(p) != .wall and g.monsterAt(p) == null and !p.eql(g.hero);
     }
 
     fn moveMonsterToward(g: *Game, m: *Monster, goal: Pos) void {
@@ -509,7 +532,7 @@ pub const Game = struct {
         for (options) |d| {
             if (d.x == 0 and d.y == 0) continue;
             const next = m.pos.add(d);
-            if (g.tileAt(next) != .wall and g.monsterAt(next) == null and !next.eql(g.hero)) {
+            if (g.isFreeForMonster(next)) {
                 m.pos = next;
                 return;
             }
@@ -665,6 +688,61 @@ test "nearby monster chases the hero" {
     });
     g.step(.wait);
     try testing.expectEqual(Pos{ .x = 4, .y = 1 }, g.monsters[0].pos);
+}
+
+// Hero in the top-left corner; a monster shut in a 3x3 pocket far away
+// (more than chase_radius tiles), so it can only wander.
+const pocket_layout: Layout = .{
+    "##############################",
+    "#@...........................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#...................#####....#",
+    "#...................#...#....#",
+    "#...................#.M.#....#",
+    "#...................#...#....#",
+    "#...................#####....#",
+    "#............................#",
+    "##############################",
+};
+
+test "far-away monsters wander now and then" {
+    var prng = std.Random.DefaultPrng.init(3);
+    var g = testGame(&prng, pocket_layout);
+    var moves: usize = 0;
+    for (0..200) |_| {
+        const before = g.monsters[0].pos;
+        g.step(.wait);
+        const now = g.monsters[0].pos;
+        if (!now.eql(before)) moves += 1;
+        // Never walks through the pocket's walls.
+        try testing.expect(now.x >= 21 and now.x <= 23 and now.y >= 6 and now.y <= 8);
+        try testing.expectEqual(Tile.floor, g.tileAt(now));
+    }
+    // About 30% of 200 turns; a wide range, but the seed is fixed.
+    try testing.expect(moves >= 30 and moves <= 90);
+}
+
+test "a boxed-in monster cannot wander" {
+    var prng = std.Random.DefaultPrng.init(3);
+    var g = testGame(&prng, .{
+        "##############################",
+        "#@...........................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#.....................###....#",
+        "#.....................#M#....#",
+        "#.....................###....#",
+        "#............................#",
+        "#............................#",
+        "##############################",
+    });
+    const start = g.monsters[0].pos;
+    for (0..50) |_| g.step(.wait);
+    try testing.expectEqual(start, g.monsters[0].pos);
 }
 
 test "zero HP ends the game in defeat" {

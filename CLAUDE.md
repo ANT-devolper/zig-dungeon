@@ -48,6 +48,7 @@ src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --
 
 - **`src/root.zig` does no I/O.** It holds the map, turns, monster AI and rendering. `Game.render(w, RenderOptions)` writes to any `*std.Io.Writer`, which is what makes the logic testable without a terminal. Keep new game logic here.
 - **`src/main.zig` is a thin shell.** It seeds the RNG, then loops: draw a frame, read a line, call `parseCommand`, call `Game.step`. Then it plays the turn's effects in turn order. If `game.hit_pos != null`, `playStrikeEffect` blinks a spark over the monster the hero hit (`*` if wounded, `X` if killed). If `game.damage_taken > 0`, `playHitEffect` runs the red flash and screen shake.
+- **Monster AI** (`monstersTurn`): a monster next to the hero bites. Within `chase_radius` (6, Manhattan distance), it steps toward the hero (`moveMonsterToward`). Otherwise it has a `wander_chance` (30%) chance per turn to step in a random free direction (`wander`). Both kinds of step use `isFreeForMonster`: no wall, no other monster, not the hero.
 - **Per-turn effect state** (`damage_taken`, `hit_pos`, `hit_killed`, `events`, `Monster.bit`) is reset at the start of `Game.step`. The renderer reads it, and `RenderOptions` (`color`, `flash`, `shake`, `spark`) chooses how each frame looks.
 - **No allocations.** The map is `[H][W]Tile` and monsters live in a fixed array (`max_monsters`). Keep it that way unless a feature really needs dynamic memory.
 - **Levels are generated mazes.** `Game.generateLevel` retries `tryGenerateLevel` until the result is good:
