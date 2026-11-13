@@ -80,6 +80,8 @@ pub const Command = enum {
     right,
     wait,
     quit,
+    /// Open the inventory screen. Does not use a turn.
+    inventory,
 
     fn delta(c: Command) Pos {
         return switch (c) {
@@ -87,9 +89,15 @@ pub const Command = enum {
             .down => .{ .x = 0, .y = 1 },
             .left => .{ .x = -1, .y = 0 },
             .right => .{ .x = 1, .y = 0 },
-            .wait, .quit => .{ .x = 0, .y = 0 },
+            .wait, .quit, .inventory => .{ .x = 0, .y = 0 },
         };
     }
+};
+
+/// What the hero carries. New item kinds go here as new fields, and
+/// `Game.renderInventory` lists them.
+pub const Inventory = struct {
+    gold: u32 = 0,
 };
 
 pub const State = enum { playing, won, lost, quit };
@@ -114,6 +122,7 @@ pub fn parseCommand(line: []const u8) ?Command {
         'd' => .right,
         '.' => .wait,
         'q' => .quit,
+        'i' => .inventory,
         else => null,
     };
 }
@@ -149,7 +158,7 @@ pub const Game = struct {
     map: [H][W]Tile = undefined,
     hero: Pos = .{ .x = 1, .y = 1 },
     hp: i32 = max_hp,
-    gold: u32 = 0,
+    inventory: Inventory = .{},
     level: u8 = 1,
     monsters: [max_monsters]Monster = undefined,
     monster_count: usize = 0,
@@ -425,6 +434,8 @@ pub const Game = struct {
     /// Runs one turn: the hero's action, then the monsters'.
     pub fn step(g: *Game, cmd: Command) void {
         if (g.state != .playing) return;
+        // Looking at the inventory is free: no turn passes, nothing changes.
+        if (cmd == .inventory) return;
 
         g.damage_taken = 0;
         g.hit_pos = null;
@@ -439,6 +450,7 @@ pub const Game = struct {
                 return;
             },
             .wait => g.message = "You wait...",
+            .inventory => unreachable, // handled above
             .up, .down, .left, .right => {
                 const target = g.hero.add(cmd.delta());
                 if (g.monsterAt(target)) |i| {
@@ -459,7 +471,7 @@ pub const Game = struct {
                     },
                     .gold => {
                         g.hero = target;
-                        g.gold += gold_value;
+                        g.inventory.gold += gold_value;
                         g.events.gold = true;
                         g.map[@intCast(target.y)][@intCast(target.x)] = .floor;
                         g.message = "You picked up gold!";
@@ -596,9 +608,7 @@ pub const Game = struct {
     pub fn render(g: *const Game, w: *std.Io.Writer, opts: RenderOptions) std.Io.Writer.Error!void {
         const hurt = g.damage_taken > 0;
         const seen: ?[H][W]bool = if (opts.fov) g.visibility() else null;
-        try w.print("DUNGEON  Level {d}/{d}   HP {d}/{d}   Gold {d}\n\n", .{
-            g.level, last_level, g.hp, max_hp, g.gold,
-        });
+        try g.writeHeader(w);
         for (0..H) |y| {
             try w.splatByteAll(' ', opts.shake);
             if (opts.flash) try w.writeAll(ansi_red_bg);
@@ -653,8 +663,29 @@ pub const Game = struct {
         }
         try w.writeByte('\n');
         if (g.state == .playing) {
-            try w.writeAll("[w/a/s/d] move  [.] wait  [q] quit  + Enter\n> ");
+            try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [q] quit  + Enter\n> ");
         }
+    }
+
+    /// Status line shared by the map and the inventory screen.
+    fn writeHeader(g: *const Game, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.print("DUNGEON  Level {d}/{d}   HP {d}/{d}   Gold {d}\n\n", .{
+            g.level, last_level, g.hp, max_hp, g.inventory.gold,
+        });
+    }
+
+    /// Draws the inventory screen to any Writer.
+    pub fn renderInventory(g: *const Game, w: *std.Io.Writer, color: bool) std.Io.Writer.Error!void {
+        try g.writeHeader(w);
+        try w.writeAll("========== INVENTORY ==========\n\n");
+        if (color) {
+            try w.print("  Gold ................... {s}{d}{s}\n\n", .{ ansi_green, g.inventory.gold, ansi_reset });
+        } else {
+            try w.print("  Gold ................... {d}\n\n", .{g.inventory.gold});
+        }
+        try w.writeAll("  (no other items yet)\n\n");
+        try w.writeAll("===============================\n");
+        try w.writeAll("[Enter] close\n> ");
     }
 };
 
@@ -692,6 +723,8 @@ test "parseCommand handles keys, uppercase and \\r" {
     try testing.expectEqual(Command.right, parseCommand("d").?);
     try testing.expectEqual(Command.wait, parseCommand(".").?);
     try testing.expectEqual(Command.quit, parseCommand("q").?);
+    try testing.expectEqual(Command.inventory, parseCommand("i").?);
+    try testing.expectEqual(Command.inventory, parseCommand("I\r").?);
     try testing.expectEqual(@as(?Command, null), parseCommand(""));
     try testing.expectEqual(@as(?Command, null), parseCommand("x"));
 }
@@ -708,7 +741,7 @@ test "picking up gold adds score and clears the tile" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, test_layout);
     g.step(.up);
-    try testing.expectEqual(@as(u32, gold_value), g.gold);
+    try testing.expectEqual(@as(u32, gold_value), g.inventory.gold);
     try testing.expectEqual(Tile.floor, g.tileAt(g.hero));
 }
 
@@ -812,17 +845,17 @@ test "zero HP ends the game in defeat" {
     try testing.expectEqual(State.lost, g.state);
     try testing.expectEqual(@as(i32, 0), g.hp);
     g.step(.up); // nothing happens after the game ends
-    try testing.expectEqual(@as(u32, 0), g.gold);
+    try testing.expectEqual(@as(u32, 0), g.inventory.gold);
 }
 
 test "stairs lead to the next level keeping HP and gold" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, test_layout);
-    g.gold = 30;
+    g.inventory.gold = 30;
     g.hp = 7;
     g.step(.down);
     try testing.expectEqual(@as(u8, 2), g.level);
-    try testing.expectEqual(@as(u32, 30), g.gold);
+    try testing.expectEqual(@as(u32, 30), g.inventory.gold);
     try testing.expectEqual(@as(i32, 7), g.hp);
     try testing.expectEqual(State.playing, g.state);
 }
@@ -833,6 +866,50 @@ test "stairs on the last level win the game" {
     g.level = last_level;
     g.step(.down);
     try testing.expectEqual(State.won, g.state);
+}
+
+test "opening the inventory does not use a turn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.message = "before";
+    const monster_before = g.monsters[0].pos;
+    g.step(.inventory);
+    try testing.expectEqual(@as(i32, max_hp), g.hp); // the adjacent monster did not bite
+    try testing.expectEqual(monster_before, g.monsters[0].pos);
+    try testing.expectEqualStrings("before", g.message);
+    try testing.expectEqual(Events{}, g.events);
+    try testing.expectEqual(State.playing, g.state);
+    // A real turn does let the monster bite.
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, max_hp - monster_damage), g.hp);
+}
+
+test "inventory screen lists the gold" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.gold = 30;
+    var buf: [4096]u8 = undefined;
+
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    const plain = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, plain, "INVENTORY") != null);
+    try testing.expect(std.mem.indexOf(u8, plain, "Gold ................... 30") != null);
+    try testing.expect(std.mem.indexOf(u8, plain, "(no other items yet)") != null);
+    try testing.expect(std.mem.indexOf(u8, plain, "[Enter] close") != null);
+    try testing.expect(std.mem.indexOfScalar(u8, plain, 0x1b) == null);
+
+    var cw: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&cw, true);
+    try testing.expect(std.mem.indexOf(u8, cw.buffered(), ansi_green ++ "30" ++ ansi_reset) != null);
+}
+
+test "map help mentions the inventory key" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const g = testGame(&prng, test_layout);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "[i] inventory") != null);
 }
 
 test "q quits the game" {

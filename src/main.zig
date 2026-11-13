@@ -37,6 +37,14 @@ pub fn main(init: std.process.Init) !void {
 
         const line = try in.takeDelimiter('\n') orelse break; // EOF (Ctrl+Z / end of pipe)
         if (dungeon.parseCommand(line)) |cmd| {
+            if (cmd == .inventory) {
+                // A pause screen: no turn passes. Any line closes it.
+                try out.writeAll("\x1b[2J\x1b[H");
+                try game.renderInventory(out, true);
+                try out.flush();
+                _ = try in.takeDelimiter('\n') orelse break;
+                continue;
+            }
             game.step(cmd);
             if (game.events.gold) playSfx(.gold);
             if (game.events.stairs) playSfx(.stairs);
@@ -50,12 +58,12 @@ pub fn main(init: std.process.Init) !void {
                 try playHitEffect(io, out, &game);
             }
         } else {
-            game.message = "Invalid command. Use w/a/s/d, . or q.";
+            game.message = "Invalid command. Use w/a/s/d, ., i or q.";
         }
     }
 
     try drawFrame(out, &game, .{ .color = true });
-    try out.print("\nFinal score: {d} gold, level {d}.\n", .{ game.gold, game.level });
+    try out.print("\nFinal score: {d} gold, level {d}.\n", .{ game.inventory.gold, game.level });
     try out.flush();
 
     // Ending jingle. Wait for it, or it is cut off when the process exits.

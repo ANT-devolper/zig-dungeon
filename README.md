@@ -53,6 +53,7 @@ Type a command and press **Enter**:
 | `a` | move left  |
 | `d` | move right |
 | `.` | wait       |
+| `i` | open the inventory (does not use a turn; Enter closes it) |
 | `q` | quit       |
 
 | Symbol | Meaning            |
