@@ -40,11 +40,12 @@ printf "d\nd\ns\nq\n" | ./zig-out/bin/dungeon.exe
 build.zig       module "dungeon" (src/root.zig) + executable "dungeon" (src/main.zig)
 build.zig.zon   package manifest (package name `.zig` is tied to the fingerprint; leave it)
 src/root.zig    pure game logic + all tests
-src/main.zig    entry point: I/O loop and the hit animation
+src/main.zig    entry point: I/O loop and the strike/hit animations
 ```
 
 - **`src/root.zig` does no I/O.** It holds the map, turns, monster AI and rendering. `Game.render(w, RenderOptions)` writes to any `*std.Io.Writer`, which is what makes the logic testable without a terminal. Keep new game logic here.
-- **`src/main.zig` is a thin shell.** It seeds the RNG, then loops: draw a frame, read a line, call `parseCommand`, call `Game.step`. When `game.damage_taken > 0` it plays the hit effect (red flash plus screen shake frames).
+- **`src/main.zig` is a thin shell.** It seeds the RNG, then loops: draw a frame, read a line, call `parseCommand`, call `Game.step`. Then it plays the turn's effects in turn order. If `game.hit_pos != null`, `playStrikeEffect` blinks a spark over the monster the hero hit (`*` if wounded, `X` if killed). If `game.damage_taken > 0`, `playHitEffect` runs the red flash and screen shake.
+- **Per-turn effect state** (`damage_taken`, `hit_pos`, `hit_killed`, `Monster.bit`) is reset at the start of `Game.step`. The renderer reads it, and `RenderOptions` (`color`, `flash`, `shake`, `spark`) chooses how each frame looks.
 - **No allocations.** The map is `[H][W]Tile` and monsters live in a fixed array (`max_monsters`). Keep it that way unless a feature really needs dynamic memory.
 - **Levels** are string literals in `levels`. A `comptime` block checks that every row is exactly `W` wide. A test runs a BFS on each level to check that the start can reach the stairs, so new levels are covered automatically.
 - **Randomness** goes through `Game.rng`. In tests, build the game with `testGame(&prng, layout)` and a fixed seed. Test layouts can place `M` and `$` directly, so nothing in them is random.

@@ -48,12 +48,16 @@ pub const RenderOptions = struct {
     /// Left indent of each map row; 1 is the resting position, 0 and 2
     /// shift the map left/right to shake the screen.
     shake: u2 = 1,
+    /// Draw the strike spark where the hero's attack landed this turn:
+    /// '*' on a wounded monster, 'X' where a monster was killed.
+    spark: bool = false,
 };
 
 const ansi_reset = "\x1b[0m";
 const ansi_red = "\x1b[1;31m";
 const ansi_yellow = "\x1b[1;33m";
 const ansi_red_bg = "\x1b[41m";
+const ansi_spark = "\x1b[1;37;45m";
 
 pub const Command = enum {
     up,
@@ -160,6 +164,10 @@ pub const Game = struct {
     message: []const u8 = "",
     /// Damage the hero took during the last turn (drives the hit effects).
     damage_taken: i32 = 0,
+    /// Where the hero's attack landed during the last turn, if anywhere.
+    hit_pos: ?Pos = null,
+    /// Whether that attack killed the monster.
+    hit_killed: bool = false,
     rng: std.Random,
 
     /// Starts a new game on level 1, with random monsters and gold.
@@ -253,6 +261,8 @@ pub const Game = struct {
         if (g.state != .playing) return;
 
         g.damage_taken = 0;
+        g.hit_pos = null;
+        g.hit_killed = false;
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
 
         switch (cmd) {
@@ -266,8 +276,10 @@ pub const Game = struct {
                 const target = g.hero.add(cmd.delta());
                 if (g.monsterAt(target)) |i| {
                     g.monsters[i].hp -= hero_damage;
+                    g.hit_pos = target;
                     if (g.monsters[i].hp <= 0) {
                         g.removeMonster(i);
+                        g.hit_killed = true;
                         g.message = "You defeated a monster!";
                     } else {
                         g.message = "You hit the monster.";
@@ -355,7 +367,11 @@ pub const Game = struct {
                 const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
                 // Color to wrap this cell with, if any.
                 var color: ?[]const u8 = null;
-                const c: u8 = if (p.eql(g.hero)) blk: {
+                const sparkling = opts.spark and g.hit_pos != null and g.hit_pos.?.eql(p);
+                const c: u8 = if (sparkling) blk: {
+                    color = ansi_spark;
+                    break :blk if (g.hit_killed) 'X' else '*';
+                } else if (p.eql(g.hero)) blk: {
                     if (hurt) color = ansi_red;
                     break :blk '@';
                 } else if (g.monsterAt(p)) |i| blk: {
@@ -623,6 +639,69 @@ test "flash render uses a red background" {
     var buf: [4096]u8 = undefined;
     const out = try renderToBuf(&g, &buf, .{ .flash = true });
     try testing.expect(std.mem.indexOf(u8, out, ansi_red_bg) != null);
+}
+
+test "hitting a monster records where the strike landed" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    const monster_pos = g.monsters[0].pos;
+    g.step(.right);
+    try testing.expectEqual(@as(?Pos, monster_pos), g.hit_pos);
+    try testing.expect(!g.hit_killed);
+    g.step(.right);
+    try testing.expectEqual(@as(?Pos, monster_pos), g.hit_pos);
+    try testing.expect(g.hit_killed);
+}
+
+test "a turn without an attack clears the strike" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.right);
+    g.step(.wait);
+    try testing.expectEqual(@as(?Pos, null), g.hit_pos);
+    try testing.expect(!g.hit_killed);
+}
+
+/// Returns the character drawn at map cell `p` in a plain render.
+fn cellAt(out: []const u8, p: Pos, shake: u2) u8 {
+    var lines = std.mem.splitScalar(u8, out, '\n');
+    _ = lines.next(); // header
+    _ = lines.next(); // blank line
+    var y: i32 = 0;
+    while (lines.next()) |line| : (y += 1) {
+        if (y == p.y) return line[@as(usize, shake) + @as(usize, @intCast(p.x))];
+    }
+    unreachable;
+}
+
+test "spark replaces a wounded monster with '*'" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    const monster_pos = g.monsters[0].pos;
+    g.step(.right);
+    var buf: [4096]u8 = undefined;
+    try testing.expectEqual(@as(u8, '*'), cellAt(try renderToBuf(&g, &buf, .{ .spark = true }), monster_pos, 1));
+    try testing.expectEqual(@as(u8, 'M'), cellAt(try renderToBuf(&g, &buf, .{}), monster_pos, 1));
+}
+
+test "spark marks a killed monster with 'X'" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    const monster_pos = g.monsters[0].pos;
+    g.step(.right);
+    g.step(.right);
+    var buf: [4096]u8 = undefined;
+    try testing.expectEqual(@as(u8, 'X'), cellAt(try renderToBuf(&g, &buf, .{ .spark = true }), monster_pos, 1));
+    try testing.expectEqual(@as(u8, '.'), cellAt(try renderToBuf(&g, &buf, .{}), monster_pos, 1));
+}
+
+test "color spark uses its own highlight" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.step(.right);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .spark = true, .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_spark ++ "*" ++ ansi_reset) != null);
 }
 
 test "shake shifts the map rows" {

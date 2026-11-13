@@ -26,6 +26,8 @@ pub fn main(init: std.process.Init) !void {
         const line = try in.takeDelimiter('\n') orelse break; // EOF (Ctrl+Z / end of pipe)
         if (dungeon.parseCommand(line)) |cmd| {
             game.step(cmd);
+            // Same order as the turn: the hero's strike, then the monsters' bites.
+            if (game.hit_pos != null) try playStrikeEffect(io, out, &game);
             if (game.damage_taken > 0) try playHitEffect(io, out, &game);
         } else {
             game.message = "Invalid command. Use w/a/s/d, . or q.";
@@ -42,6 +44,19 @@ fn drawFrame(out: *Io.Writer, game: *const dungeon.Game, opts: dungeon.RenderOpt
     try out.writeAll("\x1b[2J\x1b[H"); // clear the screen (ANSI)
     try game.render(out, opts);
     try out.flush();
+}
+
+/// Short animation when the hero hits a monster: a spark blinks over it.
+fn playStrikeEffect(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
+    const frames = [_]struct { opts: dungeon.RenderOptions, ms: i64 }{
+        .{ .opts = .{ .color = true, .spark = true }, .ms = 90 },
+        .{ .opts = .{ .color = true }, .ms = 60 },
+        .{ .opts = .{ .color = true, .spark = true }, .ms = 90 },
+    };
+    for (frames) |f| {
+        try drawFrame(out, game, f.opts);
+        try io.sleep(Io.Duration.fromMilliseconds(f.ms), .awake);
+    }
 }
 
 /// Short animation when the hero gets hurt: red flash, then a screen shake.
