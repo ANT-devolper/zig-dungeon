@@ -18,7 +18,7 @@ const chest_chance = 25;
 const chest_gold_min = 20;
 const chest_gold_max = 50;
 /// Chance (in %) that a chest holds a potion instead of gold.
-const chest_potion_chance = 50;
+const chest_potion_chance = 85;
 /// Chance (in %) that a chest's potion is a time stop potion.
 const time_stop_chance = 10;
 /// Free turns the monsters stay frozen after drinking time stop.
@@ -1716,7 +1716,7 @@ const chest_layout: Layout = .{
     "##############################",
 };
 
-test "about half of the chests hold a potion, and then no gold" {
+test "85% of the chests hold a potion, and then no gold" {
     var with_potion: usize = 0;
     const trials = 1000;
     for (0..trials) |seed| {
@@ -1743,7 +1743,7 @@ test "about half of the chests hold a potion, and then no gold" {
             try testing.expect(g.chest_gold >= chest_gold_min);
         }
     }
-    try testing.expect(with_potion >= 400 and with_potion <= 600);
+    try testing.expect(with_potion >= 800 and with_potion <= 900);
 }
 
 test "drinking heals, caps at max HP and uses a turn" {
@@ -1899,7 +1899,7 @@ test "about a quarter of the item spots are chests" {
 }
 
 test "a chest without a potion gives 20 to 50 gold" {
-    // Find a seed whose chest holds gold (half of them hold a potion).
+    // Find a seed whose chest holds gold (only 15% of them do).
     var seed: u64 = 0;
     var prng = std.Random.DefaultPrng.init(seed);
     var g = testGame(&prng, chest_layout);
