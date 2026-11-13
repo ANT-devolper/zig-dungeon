@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for working in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
 
@@ -22,6 +22,7 @@ Guidance for working in this repository.
 
 ```sh
 zig build test --summary all     # run all tests (must pass before committing)
+zig test src/root.zig --test-filter "wall blocks"  # run only tests whose name contains the text
 zig fmt --check src/ build.zig   # formatting check (zig fmt src/ build.zig to fix)
 zig build run                    # build and play
 zig build                        # build zig-out/bin/dungeon(.exe)
@@ -55,6 +56,7 @@ src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --
 - **World rounds (effects combine — a user rule):** every effect counter counts **rounds, not actions**. At the end of `step`, while `speed > 0` the hero gets 2 actions per round: the first sets `half_round` and returns, and the second closes the round. Without speed, every action closes a round, which is the old behavior. `endRound()` ticks the counters once per round and calls `monstersTurn` unless time is stopped. Actions that use no turn return before this, so they never touch `half_round`. Taking the stairs resets `half_round`. New timed effects must tick in `endRound`, never per action.
 - **Time stop:** drinking it sets `Game.time_stop = time_stop_turns` (3; drinking again resets, never adds), `time_stop_fresh` and `events.time_stop`. In `endRound`, a fresh time stop clears the flag without decrementing: the round it was drunk in is free, even when it was drunk in the first half of a fast round. Later rounds with `time_stop > 0` decrement and skip `monstersTurn`, so monsters are frozen for the drink round plus 3. `timeStopped()` drives the blue monsters (`ansi_blue`), and `writeHeader` shows `TIME STOP N`.
 - **Speed:** `Potion.speed` (15% of chest potions; `speed_chance` follows `time_stop_chance` in the same roll) sets `Game.speed = speed_turns` (10; resets, never adds) and `events.speed`. It is always drunk at the start of a fast round, so that round counts: 10 rounds are 20 actions, including the drink. `endRound` decrements it. `isFast()` drives the hero's cyan background (`ansi_fast`; red when hurt wins), and `writeHeader` shows `SPEED N`.
+- **Strength:** three sized kinds (`strength_small/medium/large`, +1/+2/+3 damage from `Potion.strength()`), 15% of chest potions (`strength_chance`, after speed in the same roll), and the size comes from `Potion.strengthFromRoll` (same 50/35/15 split). Drinking adds to `Game.strength_bonus` (**bonuses add up** — a user rule) and sets `Game.strength = strength_turns` (3, resets) plus `strength_fresh`, so like time stop the drink round is free and the bonus lasts it plus 3 rounds. `endRound` decrements it and clears the bonus at 0. Attacks deal `attackDamage()` (`hero_damage + strength_bonus`), and `writeHeader` shows `STRENGTH +B (N)`.
 - **Monster AI** (`monstersTurn`): a monster next to the hero bites. Within `chase_radius` (6, Manhattan distance), it steps toward the hero (`moveMonsterToward`). Otherwise it has a `wander_chance` (30%) chance per turn to step in a random free direction (`wander`). Both kinds of step use `isFreeForMonster`: no wall, no other monster, not the hero.
 - **Per-turn effect state** (`damage_taken`, `hit_pos`, `hit_killed`, `events`, `Monster.bit`) is reset at the start of `Game.step`. The renderer reads it, and `RenderOptions` (`color`, `flash`, `shake`, `spark`) chooses how each frame looks.
 - **No allocations.** The map is `[H][W]Tile` and monsters live in a fixed array (`max_monsters`). Keep it that way unless a feature really needs dynamic memory.

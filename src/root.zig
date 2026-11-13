@@ -27,34 +27,62 @@ pub const time_stop_turns = 3;
 const speed_chance = 15;
 /// Rounds the hero stays fast (2 actions per round) after drinking speed.
 pub const speed_turns = 10;
+/// Chance (in %) that a chest's potion is a strength potion.
+const strength_chance = 15;
+/// Rounds the strength bonus lasts after the round it was drunk in.
+pub const strength_turns = 3;
 
-/// Potion kinds the hero can carry: three sizes of health potion, plus the
-/// time stop and speed potions, which are single kinds with no sizes.
+/// Potion kinds the hero can carry: three sizes of health potion, three
+/// sizes of strength potion, plus the time stop and speed potions, which
+/// are single kinds with no sizes.
 pub const Potion = enum {
     small,
     medium,
     large,
     time_stop,
     speed,
+    strength_small,
+    strength_medium,
+    strength_large,
 
-    pub const count = 5;
+    pub const count = 8;
 
-    /// HP restored (time stop and speed heal nothing).
+    /// HP restored (only health potions heal).
     pub fn heal(p: Potion) i32 {
         return switch (p) {
             .small => 1,
             .medium => 3,
             .large => 5,
-            .time_stop, .speed => 0,
+            else => 0,
+        };
+    }
+
+    /// Extra attack damage (only strength potions give it).
+    pub fn strength(p: Potion) i32 {
+        return switch (p) {
+            .strength_small => 1,
+            .strength_medium => 2,
+            .strength_large => 3,
+            else => 0,
         };
     }
 
     /// Maps a roll in 0..99 to a health potion size: small 50%,
-    /// medium 35%, large 15%. Never returns `time_stop` or `speed`.
+    /// medium 35%, large 15%. Only ever returns health potions.
     pub fn fromRoll(roll: u8) Potion {
         if (roll < 50) return .small;
         if (roll < 85) return .medium;
         return .large;
+    }
+
+    /// Maps a roll in 0..99 to a strength potion size, with the same
+    /// split as `fromRoll`: small 50%, medium 35%, large 15%.
+    pub fn strengthFromRoll(roll: u8) Potion {
+        return switch (fromRoll(roll)) {
+            .small => .strength_small,
+            .medium => .strength_medium,
+            else => .strength_large,
+        };
     }
 
     /// Name used in messages.
@@ -65,6 +93,9 @@ pub const Potion = enum {
             .large => "large health potion",
             .time_stop => "time stop potion",
             .speed => "speed potion",
+            .strength_small => "small strength potion",
+            .strength_medium => "medium strength potion",
+            .strength_large => "large strength potion",
         };
     }
 
@@ -231,6 +262,7 @@ pub const Events = struct {
     drink: bool = false,
     time_stop: bool = false,
     speed: bool = false,
+    strength: bool = false,
     stairs: bool = false,
     won: bool = false,
     lost: bool = false,
@@ -309,6 +341,12 @@ pub const Game = struct {
     time_stop_fresh: bool = false,
     /// Rounds left with the hero fast (speed potion).
     speed: u8 = 0,
+    /// Rounds left with the strength bonus (strength potions).
+    strength: u8 = 0,
+    /// Extra attack damage while `strength > 0`; drinking more adds up.
+    strength_bonus: i32 = 0,
+    /// Strength was drunk during the current round, which does not count.
+    strength_fresh: bool = false,
     /// A fast hero already used the first of the 2 actions of this round.
     half_round: bool = false,
     events: Events = .{},
@@ -608,7 +646,7 @@ pub const Game = struct {
             .up, .down, .left, .right => {
                 const target = g.hero.add(cmd.delta());
                 if (g.monsterAt(target)) |i| {
-                    g.monsters[i].hp -= hero_damage;
+                    g.monsters[i].hp -= g.attackDamage();
                     g.hit_pos = target;
                     if (g.monsters[i].hp <= 0) {
                         g.removeMonster(i);
@@ -640,6 +678,8 @@ pub const Game = struct {
                                 .time_stop
                             else if (roll < time_stop_chance + speed_chance)
                                 .speed
+                            else if (roll < time_stop_chance + speed_chance + strength_chance)
+                                Potion.strengthFromRoll(g.rng.uintLessThan(u8, 100))
                             else
                                 Potion.fromRoll(g.rng.uintLessThan(u8, 100));
                             g.inventory.add(kind);
@@ -690,7 +730,18 @@ pub const Game = struct {
             g.time_stop -= 1;
         }
         if (g.speed > 0) g.speed -= 1;
+        if (g.strength_fresh) {
+            g.strength_fresh = false; // the round it was drunk in is free
+        } else if (g.strength > 0) {
+            g.strength -= 1;
+            if (g.strength == 0) g.strength_bonus = 0;
+        }
         if (!frozen) g.monstersTurn();
+    }
+
+    /// Damage the hero's attack deals, including any strength bonus.
+    pub fn attackDamage(g: *const Game) i32 {
+        return hero_damage + g.strength_bonus;
     }
 
     /// True while the monsters are frozen by a time stop potion.
@@ -721,6 +772,19 @@ pub const Game = struct {
             g.message = "You feel fast!";
             return true;
         }
+        if (kind.strength() > 0) {
+            g.inventory.remove(kind);
+            g.strength_bonus += kind.strength(); // bonuses add up
+            g.strength = strength_turns; // the counter resets, never adds
+            g.strength_fresh = true;
+            g.events.strength = true;
+            g.message = switch (kind) {
+                .strength_small => "You feel stronger! (+1 damage)",
+                .strength_medium => "You feel stronger! (+2 damage)",
+                else => "You feel stronger! (+3 damage)",
+            };
+            return true;
+        }
         if (g.hp >= max_hp) {
             g.message = "You are already at full health.";
             return false;
@@ -735,7 +799,7 @@ pub const Game = struct {
             .small => "You drink a small health potion.",
             .medium => "You drink a medium health potion.",
             .large => "You drink a large health potion.",
-            .time_stop, .speed => unreachable, // handled above
+            else => unreachable, // handled above
         };
         return true;
     }
@@ -943,6 +1007,7 @@ pub const Game = struct {
         });
         if (g.time_stop > 0) try w.print("   TIME STOP {d}", .{g.time_stop});
         if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
+        if (g.strength > 0) try w.print("   STRENGTH +{d} ({d})", .{ g.strength_bonus, g.strength });
         try w.writeAll("\n\n");
     }
 
@@ -969,6 +1034,9 @@ pub const Game = struct {
                 .large => "Large health potion  (+5 HP)",
                 .time_stop => "Time stop potion     (3 turns)",
                 .speed => "Speed potion         (10 turns)",
+                .strength_small => "Small strength potion  (+1 dmg, 3 turns)",
+                .strength_medium => "Medium strength potion (+2 dmg, 3 turns)",
+                .strength_large => "Large strength potion  (+3 dmg, 3 turns)",
             };
             try w.print("  {d}) {s} ..... x", .{ number, label });
             try writeAmount(w, color, inv.potionCount(p));
@@ -1283,17 +1351,103 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.fromRoll(@intCast(r)).index()] += 1;
     // Time stop has no sizes: it never comes out of the size roll.
-    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0, 0, 0, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.small.heal());
     try testing.expectEqual(@as(i32, 3), Potion.medium.heal());
     try testing.expectEqual(@as(i32, 5), Potion.large.heal());
     try testing.expectEqual(@as(i32, 0), Potion.time_stop.heal());
 }
 
-test "chest potions: about 10% time stop and 15% speed" {
+test "strength potions add 1, 2 and 3 damage and use the same size split" {
+    var counts: [Potion.count]usize = @splat(0);
+    for (0..100) |r| counts[Potion.strengthFromRoll(@intCast(r)).index()] += 1;
+    try testing.expectEqual([Potion.count]usize{ 0, 0, 0, 0, 0, 50, 35, 15 }, counts);
+    try testing.expectEqual(@as(i32, 1), Potion.strength_small.strength());
+    try testing.expectEqual(@as(i32, 2), Potion.strength_medium.strength());
+    try testing.expectEqual(@as(i32, 3), Potion.strength_large.strength());
+    try testing.expectEqual(@as(i32, 0), Potion.large.strength());
+    try testing.expectEqual(@as(i32, 0), Potion.strength_large.heal());
+}
+
+test "strength works at full health and shows its counter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout); // nothing next to the hero
+    var buf: [8192]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "STRENGTH") == null);
+    g.inventory.add(.strength_medium);
+    g.step(.use_1);
+    try testing.expect(g.events.strength);
+    try testing.expectEqualStrings("You feel stronger! (+2 damage)", g.message);
+    try testing.expectEqual(@as(u8, strength_turns), g.strength);
+    try testing.expectEqual(@as(i32, hero_damage + 2), g.attackDamage());
+    try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.strength_medium));
+    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "STRENGTH +2 (3)") != null);
+}
+
+test "strength lasts the drink round plus 3 rounds" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout); // a monster is next to the hero
+    g.hp = 1000; // survive the bites
+    g.monsters[0].hp = 100; // survive the hits
+    g.inventory.add(.strength_small);
+    g.step(.use_1); // the drink round is free
+    for (0..strength_turns) |_| {
+        const before = g.monsters[0].hp;
+        g.step(.right);
+        try testing.expectEqual(before - (hero_damage + 1), g.monsters[0].hp);
+    }
+    try testing.expectEqual(@as(u8, 0), g.strength);
+    try testing.expectEqual(@as(i32, 0), g.strength_bonus);
+    const before = g.monsters[0].hp;
+    g.step(.right);
+    try testing.expectEqual(before - hero_damage, g.monsters[0].hp);
+}
+
+test "strength bonuses add up and drinking again resets the counter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout);
+    g.inventory.add(.strength_small); // number 1
+    g.inventory.add(.strength_large); // number 2
+    g.step(.use_1); // small: +1
+    g.step(.wait);
+    g.step(.wait);
+    try testing.expectEqual(@as(u8, 1), g.strength);
+    g.step(.use_1); // large is now number 1: +1 +3
+    try testing.expectEqual(@as(u8, strength_turns), g.strength);
+    try testing.expectEqual(@as(i32, 4), g.strength_bonus);
+    try testing.expectEqual(@as(i32, hero_damage + 4), g.attackDamage());
+    for (0..strength_turns) |_| g.step(.wait);
+    try testing.expectEqual(@as(i32, hero_damage), g.attackDamage());
+}
+
+test "strength combines with speed and time stop: it counts rounds, not actions" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout);
+    g.inventory.add(.speed); // number 1
+    g.inventory.add(.time_stop); // number 2
+    g.inventory.add(.strength_small); // number 3
+    g.step(.use_1); // action 1: speed, first half of the round
+    g.step(.use_2); // action 2: strength (now number 2), the round closes
+    try testing.expectEqual(@as(u8, strength_turns), g.strength);
+    g.step(.use_1); // action 3: time stop, the effects all stack
+    try testing.expect(g.timeStopped() and g.isFast());
+    try testing.expectEqual(@as(i32, hero_damage + 1), g.attackDamage());
+    // Actions 4..8 keep the bonus: the counter drops only when a round closes.
+    const expected = [_]u8{ 2, 2, 1, 1, 0 };
+    for (expected) |left| {
+        try testing.expectEqual(@as(i32, hero_damage + 1), g.attackDamage());
+        g.step(.wait);
+        try testing.expectEqual(left, g.strength);
+    }
+    try testing.expectEqual(@as(i32, hero_damage), g.attackDamage());
+}
+
+test "chest potions: about 10% time stop, 15% speed and 15% strength" {
     var potions: usize = 0;
     var time_stops: usize = 0;
     var speeds: usize = 0;
+    var strengths: usize = 0;
     var seed: u64 = 0;
     while (potions < 2000) : (seed += 1) {
         var prng = std.Random.DefaultPrng.init(seed);
@@ -1304,11 +1458,13 @@ test "chest potions: about 10% time stop and 15% speed" {
         switch (p) {
             .time_stop => time_stops += 1,
             .speed => speeds += 1,
+            .strength_small, .strength_medium, .strength_large => strengths += 1,
             else => {},
         }
     }
     try testing.expect(time_stops >= 100 and time_stops <= 300); // 5%..15%
     try testing.expect(speeds >= 200 and speeds <= 400); // 10%..20%
+    try testing.expect(strengths >= 200 and strengths <= 400); // 10%..20%
 }
 
 test "speed works at full health and shows its counter" {
@@ -1515,6 +1671,22 @@ test "inventory lists the speed potion in pick-up order" {
     try testing.expect(std.mem.indexOf(u8, out, "2) Large health potion  (+5 HP) ..... x1") != null);
 }
 
+test "inventory lists strength potions in pick-up order" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.strength_large);
+    g.inventory.add(.small);
+    g.inventory.add(.strength_small);
+    g.inventory.add(.strength_small);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "1) Large strength potion  (+3 dmg, 3 turns) ..... x1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "2) Small health potion  (+1 HP) ..... x1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "3) Small strength potion  (+1 dmg, 3 turns) ..... x2") != null);
+}
+
 test "inventory lists the time stop potion without a size" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, test_layout);
@@ -1566,7 +1738,7 @@ test "about half of the chests hold a potion, and then no gold" {
             try testing.expect(std.mem.indexOf(u8, out, text) != null);
             try testing.expect(std.mem.indexOf(u8, out, "gold)") == null);
         } else {
-            try testing.expectEqual([Potion.count]u32{ 0, 0, 0, 0, 0 }, g.inventory.potions);
+            try testing.expectEqual(@as([Potion.count]u32, @splat(0)), g.inventory.potions);
             try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
             try testing.expect(g.chest_gold >= chest_gold_min);
         }
