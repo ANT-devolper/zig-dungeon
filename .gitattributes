@@ -1,0 +1,3 @@
+# Always use LF line endings, in the repo and on disk, whatever the
+# local core.autocrlf says. zig fmt rejects CRLF.
+* text=auto eol=lf

@@ -5,6 +5,7 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
 | 2026-11-13 | Claude never runs `git push`; the user pushes. | User rule. | [workflow.md](workflow.md) |
+| 2026-11-13 | `.gitattributes` forces LF line endings for the whole repo; the global git config stays untouched. | `core.autocrlf=true` rewrote files with CRLF and broke `zig fmt --check`. | `.gitattributes` |
 | 2026-11-13 | Project memory lives in `docs/memory/` (Markdown, in the repo). It is read before the code and updated in the same commit as every change. Details moved out of `CLAUDE.md`. | The ai-memory server was down, so there was no durable memory between sessions. | `docs/memory/`, `CLAUDE.md` |
 | 2026-11-13 | Backlog items may link to GitHub issues. | Keep ideas trackable outside the repo. | [backlog.md](backlog.md) |
 | 2026-11-13 | Every commit message has a body (what changed and why). The full message is shown to the user on every commit. | The user wants readable history and to see what goes into it. | `CLAUDE.md` Conventions, [workflow.md](workflow.md) |
