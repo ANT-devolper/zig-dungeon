@@ -75,7 +75,7 @@ src/term.zig    raw stdin mode (one key at a time, no echo, Ctrl+C as a key) for
 ## Conventions
 
 - **English everywhere in the repo:** code, comments, test names, identifiers, game text, docs and commit messages.
-- **Conventional Commits:** `feat: ...`, `fix: ...`, `docs: ...`, `test: ...`, `refactor: ...`, `chore: ...`, `build: ...`, with a lowercase imperative description. Do **not** add `Co-Authored-By` or any other AI attribution lines.
+- **Conventional Commits:** `feat: ...`, `fix: ...`, `docs: ...`, `test: ...`, `refactor: ...`, `chore: ...`, `build: ...`, with a lowercase imperative description. Every commit also has a **body** (a user rule): a blank line after the subject, then plain English text wrapped at about 72 columns that says what changed and why (rules, numbers, files touched when useful). Do **not** add `Co-Authored-By` or any other AI attribution lines.
 - Game text is plain ASCII (no accents), because the Windows console may not render UTF-8.
 - Every behavior change comes with a test in `src/root.zig`. Name tests with a sentence, e.g. `test "wall blocks the hero"`.
 - Before committing, `zig fmt --check src/ build.zig` and `zig build test` must both pass.
