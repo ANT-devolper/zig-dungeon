@@ -47,6 +47,7 @@ pub fn main(init: std.process.Init) !void {
             }
             game.step(cmd);
             if (game.events.gold) playSfx(.gold);
+            if (game.events.chest) playSfx(.chest);
             if (game.events.stairs) playSfx(.stairs);
             // Same order as the turn: the hero's strike, then the monsters' bites.
             if (game.hit_pos != null) {

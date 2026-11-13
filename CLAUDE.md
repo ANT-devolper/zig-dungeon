@@ -30,10 +30,11 @@ zig build run -- --mute          # play without sound
 zig build -Dtarget=x86_64-linux  # cross-compile check (sound is a no-op off Windows)
 ```
 
-Smoke test without a terminal (pipe commands into stdin):
+Smoke test without a terminal (commands from a file, output to a file; see Gotchas for why not a pipe):
 
 ```sh
-printf "d\nd\ns\nq\n" | ./zig-out/bin/dungeon.exe
+printf "d\nd\ns\nq\n" > in.txt
+./zig-out/bin/dungeon.exe --mute < in.txt > out.txt
 ```
 
 ## Architecture
@@ -56,7 +57,7 @@ src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --
 - **Levels are generated mazes.** `Game.generateLevel` retries `tryGenerateLevel` until the result is good:
   1. `carveMaze` builds a perfect maze with a recursive backtracker (fixed-size stack, no allocations). Maze cells sit on odd coordinates (`cellTile`), so there are 14×5 cells. Because 30×12 is even, column `W-2` and row `H-2` stay wall, which gives a double border on the right and at the bottom. The user chose to keep this instead of resizing to 31×13.
   2. `carveShortcuts` opens `maze_loops` (8) extra walls between cells, creating loops. It only ever adds paths, so all floor stays connected and **the stairs are always reachable**. It never opens (even, even) tiles, so corridors stay one tile wide.
-  3. The hero starts on a random cell. The stairs go on the floor tile farthest from the hero (`distanceMap`, a BFS), at least `min_stairs_distance` steps away. `spawnGold` prefers dead ends (`isDeadEnd`). Monsters spawn at random with `spawnMonsters`.
+  3. The hero starts on a random cell. The stairs go on the floor tile farthest from the hero (`distanceMap`, a BFS), at least `min_stairs_distance` steps away. `spawnLoot` fills `loot_count` (4) item spots, preferring dead ends (`isDeadEnd`). Each spot holds a chest (`&`, `chest_chance` 25%) or gold (`randomLoot`). A chest gives `chest_gold_min`..`chest_gold_max` (20–50) gold, stored in `Game.chest_gold` for that turn. `render` appends "(+N gold)" to the message, so no formatted text is stored in `Game`. Do not store slices into `Game`'s own memory, because `Game.init` returns it by value. Monsters spawn at random with `spawnMonsters`.
 - **Level tests:** `"generated mazes are always valid and finishable"` checks every level of 500 seeds with `expectValidLevel`: borders, a single reachable stairs tile, connectivity, one-tile corridors and spawns. Other tests cover gold in dead ends and the shortcut count. Keep them passing when you change the generator. `Layout` and `loadLayout` exist only for hand-drawn test maps.
 - **Randomness** goes through `Game.rng`. In tests, build the game with `testGame(&prng, layout)` and a fixed seed. Test layouts can place `M` and `$` directly, so nothing in them is random.
 - **Sound** (`src/sound.zig`): `synth` writes 8-bit mono 22050 Hz WAV files from `Note` lists (square or noise, linear pitch sweep, linear fade-out). Each `Sfx` defines its notes. `Bank.init` synthesizes them all once. `play` calls `PlaySoundA(SND_MEMORY | SND_ASYNC)` from winmm.dll on Windows and does nothing elsewhere; the `extern "winmm"` declaration links the DLL by itself. Async playback reads straight from the bank's buffers, so the bank is a global that must outlive playback. A new sound cuts off the previous one. `main.zig` triggers sounds from `Game.events`, `hit_pos`/`hit_killed` and `damage_taken`, and waits about 900 ms after the ending jingle.
@@ -72,6 +73,8 @@ src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --
 - Update `README.md` when player-facing rules or controls change.
 
 ## Gotchas
+
+- **Do not pipe the game's output in Git Bash** (`... | dungeon.exe | grep`, or `out=$(dungeon.exe ...)`). Once a pipe fills up (a field-of-view frame is over 5 KB), Zig 0.17.1's Windows writer panics with `reached unreachable code` / `.PENDING ... wrong File nonblocking flag`. Both `File.Writer.init` and `initStreaming` fail the same way. Redirect to a file instead (`> out.txt`). In a real console (Windows Terminal, PowerShell, VS Code) this does not happen.
 
 - 0.17 renamed or removed some builtins and std helpers. `zig fmt` rewrites `@intFromEnum` to `@backingInt`, and `std.meta.fields` is a compile error (use `@typeInfo` or `std.enums.values(E)`). Run `zig fmt` after writing code.
 - The array repetition operator `**` no longer compiles in 0.17. Use `@splat`, e.g. `var seen: [H][W]bool = @splat(@splat(false));`.

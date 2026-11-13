@@ -61,6 +61,7 @@ Type a command and press **Enter**:
 | `@`    | you, the hero (cyan; red when hurt) |
 | `M`    | monster (red)      |
 | `$`    | gold, +10 (green)  |
+| `&`    | chest, 20-50 gold (magenta) |
 | `>`    | stairs, your goal (yellow) |
 | `#`    | wall               |
 
@@ -73,7 +74,7 @@ Type a command and press **Enter**:
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - There are **3 levels**. The number of monsters grows on each one (3, 5 and 7).
-- Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and gold tends to hide in dead ends.
+- Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and loot tends to hide in dead ends. Each item spot holds gold or, 1 time in 4, a chest worth 20 to 50 gold.
 - Take the stairs on level 3 and you **win**. If your HP reaches 0, you **lose**.
 
 ## Sound

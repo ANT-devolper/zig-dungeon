@@ -13,11 +13,15 @@ const hero_damage = 2;
 const monster_hp = 3;
 const monster_damage = 1;
 const gold_value = 10;
+/// Chance (in %) that an item spot holds a chest instead of gold.
+const chest_chance = 25;
+const chest_gold_min = 20;
+const chest_gold_max = 50;
 const chase_radius = 6;
 /// Chance (in %) that a monster that is not chasing takes a random step.
 const wander_chance = 30;
 
-pub const Tile = enum { wall, floor, gold, stairs };
+pub const Tile = enum { wall, floor, gold, chest, stairs };
 
 pub const Pos = struct {
     x: i32,
@@ -68,6 +72,7 @@ const ansi_red = "\x1b[1;31m";
 const ansi_yellow = "\x1b[1;33m";
 const ansi_cyan = "\x1b[1;36m";
 const ansi_green = "\x1b[1;32m";
+const ansi_magenta = "\x1b[1;35m";
 const ansi_dim = "\x1b[38;5;248m"; // light gray: out of sight
 const ansi_bite = "\x1b[1;37;41m"; // white on red: the monster that just bit
 const ansi_red_bg = "\x1b[41m";
@@ -106,6 +111,7 @@ pub const State = enum { playing, won, lost, quit };
 /// Strikes and damage are tracked by `hit_pos`, `hit_killed` and `damage_taken`.
 pub const Events = struct {
     gold: bool = false,
+    chest: bool = false,
     stairs: bool = false,
     won: bool = false,
     lost: bool = false,
@@ -140,7 +146,8 @@ const maze_rows = (H - 1) / 2;
 const maze_loops = 8;
 const min_stairs_distance = 10;
 const monster_safe_distance = 5;
-const gold_count = 4;
+/// Item spots per level; each holds gold or a chest.
+const loot_count = 4;
 
 const directions = [_]Pos{
     .{ .x = 0, .y = -1 },
@@ -170,6 +177,8 @@ pub const Game = struct {
     hit_pos: ?Pos = null,
     /// Whether that attack killed the monster.
     hit_killed: bool = false,
+    /// Gold found in the chest opened during the last turn (0 if none).
+    chest_gold: u32 = 0,
     events: Events = .{},
     rng: std.Random,
 
@@ -185,7 +194,7 @@ pub const Game = struct {
     pub fn loadLevel(g: *Game, n: u8) void {
         g.level = n;
         g.generateLevel();
-        g.spawnGold();
+        g.spawnLoot();
         g.spawnMonsters(@min(max_monsters, 1 + n * 2));
     }
 
@@ -290,9 +299,14 @@ pub const Game = struct {
         }
     }
 
-    /// Puts the gold in dead ends first (rewarding exploration), then on
-    /// random free floor if there are not enough dead ends.
-    fn spawnGold(g: *Game) void {
+    /// Picks what an item spot holds: a chest (`chest_chance`%) or gold.
+    fn randomLoot(g: *Game) Tile {
+        return if (g.rng.uintLessThan(u8, 100) < chest_chance) .chest else .gold;
+    }
+
+    /// Puts the loot (gold or chests) in dead ends first, rewarding
+    /// exploration, then on random free floor if there are not enough.
+    fn spawnLoot(g: *Game) void {
         var dead_ends: [W * H]Pos = undefined;
         var n: usize = 0;
         for (0..H) |y| for (0..W) |x| {
@@ -303,13 +317,15 @@ pub const Game = struct {
             }
         };
         var placed: usize = 0;
-        while (placed < gold_count and n > 0) : (placed += 1) {
+        while (placed < loot_count and n > 0) : (placed += 1) {
             const i = g.rng.uintLessThan(usize, n);
-            g.setTile(dead_ends[i], .gold);
+            g.setTile(dead_ends[i], g.randomLoot());
             dead_ends[i] = dead_ends[n - 1];
             n -= 1;
         }
-        g.spawnRandom(.gold, gold_count - placed);
+        for (placed..loot_count) |_| {
+            g.setTile(g.randomFreeFloor(), g.randomLoot());
+        }
     }
 
     /// A floor tile with exactly one open neighbor.
@@ -371,6 +387,7 @@ pub const Game = struct {
                     '#' => .wall,
                     '>' => .stairs,
                     '$' => .gold,
+                    '&' => .chest,
                     else => .floor,
                 };
                 switch (c) {
@@ -400,13 +417,6 @@ pub const Game = struct {
                 .y = g.rng.intRangeLessThan(i32, 1, H - 1),
             };
             if (g.tileAt(p) == .floor and !p.eql(g.hero) and g.monsterAt(p) == null) return p;
-        }
-    }
-
-    fn spawnRandom(g: *Game, tile: Tile, count: usize) void {
-        for (0..count) |_| {
-            const p = g.randomFreeFloor();
-            g.map[@intCast(p.y)][@intCast(p.x)] = tile;
         }
     }
 
@@ -441,6 +451,7 @@ pub const Game = struct {
         g.hit_pos = null;
         g.hit_killed = false;
         g.events = .{};
+        g.chest_gold = 0;
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
 
         switch (cmd) {
@@ -475,6 +486,15 @@ pub const Game = struct {
                         g.events.gold = true;
                         g.map[@intCast(target.y)][@intCast(target.x)] = .floor;
                         g.message = "You picked up gold!";
+                    },
+                    .chest => {
+                        g.hero = target;
+                        g.chest_gold = g.rng.intRangeAtMost(u32, chest_gold_min, chest_gold_max);
+                        g.inventory.gold += g.chest_gold;
+                        g.events.chest = true;
+                        g.setTile(target, .floor);
+                        // render() appends the amount: "(+N gold)".
+                        g.message = "You open the chest!";
                     },
                     .stairs => {
                         if (g.level == last_level) {
@@ -639,6 +659,10 @@ pub const Game = struct {
                         color = ansi_green;
                         break :blk '$';
                     },
+                    .chest => blk: {
+                        color = ansi_magenta;
+                        break :blk '&';
+                    },
                     .stairs => blk: {
                         color = ansi_yellow; // the goal stands out
                         break :blk '>';
@@ -654,6 +678,13 @@ pub const Game = struct {
             try w.writeByte('\n');
         }
         try w.print("\n{s}", .{g.message});
+        if (g.events.chest) {
+            if (opts.color) {
+                try w.print(" {s}(+{d} gold){s}", .{ ansi_green, g.chest_gold, ansi_reset });
+            } else {
+                try w.print(" (+{d} gold)", .{g.chest_gold});
+            }
+        }
         if (hurt) {
             if (opts.color) {
                 try w.print(" {s}(-{d} HP){s}", .{ ansi_red, g.damage_taken, ansi_reset });
@@ -936,21 +967,21 @@ fn expectValidLevel(g: *const Game) !void {
     try testing.expectEqual(Tile.floor, g.tileAt(g.hero));
     try testing.expect(g.isFullyConnected());
 
-    // Exactly one stairs tile, reachable and far from the start; all gold.
+    // Exactly one stairs tile, reachable and far from the start; all loot.
     const dist = g.distanceMap(g.hero);
     var stairs_count: usize = 0;
-    var golds: usize = 0;
+    var loot: usize = 0;
     for (0..H) |y| for (0..W) |x| switch (g.map[y][x]) {
         .stairs => {
             stairs_count += 1;
             const d = dist[y][x] orelse return error.StairsUnreachable;
             try testing.expect(d >= min_stairs_distance);
         },
-        .gold => golds += 1,
+        .gold, .chest => loot += 1,
         else => {},
     };
     try testing.expectEqual(@as(usize, 1), stairs_count);
-    try testing.expectEqual(@as(usize, gold_count), golds);
+    try testing.expectEqual(@as(usize, loot_count), loot);
 
     // Corridors are one tile wide: no 2x2 block of open tiles.
     for (0..H - 1) |y| for (0..W - 1) |x| {
@@ -981,6 +1012,90 @@ test "generated mazes are always valid and finishable" {
     }
 }
 
+test "about a quarter of the item spots are chests" {
+    var chests: usize = 0;
+    var total: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 500) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        for (1..last_level + 1) |n| {
+            if (n > 1) g.loadLevel(@intCast(n));
+            for (g.map) |row| for (row) |t| switch (t) {
+                .chest => {
+                    chests += 1;
+                    total += 1;
+                },
+                .gold => total += 1,
+                else => {},
+            };
+        }
+    }
+    const percent = chests * 100 / total;
+    try testing.expect(percent >= 15 and percent <= 35);
+}
+
+test "opening a chest gives 20 to 50 gold" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, .{
+        "##############################",
+        "#@&..........................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "##############################",
+    });
+    g.inventory.gold = 5;
+    g.step(.right);
+    try testing.expectEqual(Pos{ .x = 2, .y = 1 }, g.hero);
+    try testing.expect(g.chest_gold >= chest_gold_min and g.chest_gold <= chest_gold_max);
+    try testing.expectEqual(5 + g.chest_gold, g.inventory.gold);
+    try testing.expectEqual(Tile.floor, g.tileAt(g.hero));
+    try testing.expectEqual(Events{ .chest = true }, g.events);
+    try testing.expectEqualStrings("You open the chest!", g.message);
+
+    // The message shows the amount.
+    var buf: [4096]u8 = undefined;
+    var expected: [32]u8 = undefined;
+    const suffix = try std.fmt.bufPrint(&expected, "(+{d} gold)", .{g.chest_gold});
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), suffix) != null);
+
+    // Next turn, the chest state is cleared.
+    g.step(.wait);
+    try testing.expectEqual(@as(u32, 0), g.chest_gold);
+    try testing.expectEqual(Events{}, g.events);
+}
+
+test "chests are drawn in magenta and hidden out of sight" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, .{
+        "##############################",
+        "#@.&.....................&...#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "#............................#",
+        "##############################",
+    });
+    var buf: [16384]u8 = undefined;
+    const colored = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, colored, ansi_magenta ++ "&" ++ ansi_reset) != null);
+    const fov = try renderToBuf(&g, &buf, .{ .fov = true });
+    try testing.expectEqual(@as(u8, '&'), cellAt(fov, .{ .x = 3, .y = 1 }, 1)); // near: visible
+    try testing.expectEqual(@as(u8, '.'), cellAt(fov, .{ .x = 26, .y = 1 }, 1)); // far: hidden
+}
+
 test "gold goes to dead ends when there are enough of them" {
     var seed: u64 = 0;
     var checked: usize = 0;
@@ -993,12 +1108,12 @@ test "gold goes to dead ends when there are enough of them" {
             const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
             if (g.isDeadEnd(p) and !p.eql(g.hero)) dead_ends += 1;
         };
-        if (dead_ends < gold_count) continue;
+        if (dead_ends < loot_count) continue;
         checked += 1;
-        g.spawnGold();
+        g.spawnLoot();
         for (0..H) |y| for (0..W) |x| {
-            if (g.map[y][x] != .gold) continue;
-            // A gold tile counts as a dead end if it has one open neighbor.
+            if (g.map[y][x] != .gold and g.map[y][x] != .chest) continue;
+            // A loot tile counts as a dead end if it has one open neighbor.
             const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
             var open: usize = 0;
             for (directions) |d| {
