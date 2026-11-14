@@ -4,6 +4,7 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-13 | The map is 31x13 with a single border, so the maze uses every line (reverses the double-border choice). | User request: a whole line was wasted. | `W`, `H`, [features/levels.md](features/levels.md) |
 | 2026-11-13 | Potion colors: vision purple, health green, strength brown, time stop yellow, speed blue. Used for the shop's `!` and inventory names. | User request. | `Potion.color` |
 | 2026-11-13 | Shop event on the stairs of every even level: 80% the first call, 50% after. Right after a shop the next chance is skipped (not called). | User rules. | `nextLevel`, [features/shop.md](features/shop.md) |
 | 2026-11-13 | The shop counts as a level. | User choice. | `loadShop` |
@@ -28,4 +29,4 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 | 2026-11-13 | A chest holds a potion **or** gold, never both. | User rule. | `.chest` branch of `step` |
 | 2026-11-13 | Inventory numbers are positions in pick-up order, with no gaps. | User rule. | [features/inventory.md](features/inventory.md) |
 | 2026-11-13 | Field of view: radius 5, walls block, the stairs hide too, a dimmed maze instead of blank. | User choices. | [features/fov.md](features/fov.md) |
-| 2026-11-13 | Keep the double wall on the right and bottom (30x12 map) instead of resizing to 31x13. | User choice. | [features/levels.md](features/levels.md) |
+| 2026-11-13 | ~~Keep the double wall on the right and bottom (30x12 map) instead of resizing to 31x13.~~ Reversed: the map is now 31x13 (see the newer row). | User choice. | [features/levels.md](features/levels.md) |

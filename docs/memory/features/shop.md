@@ -17,7 +17,7 @@ The shop **counts as a level**: `level` goes up by one and monster HP (see [mons
 
 ## The room
 
-`loadShop(n)`: all wall, a lit floor room `shop_room` (x 9..20, y 3..8), the shopkeeper at `shopkeeper_pos` (top middle), the 2 items at `shop_item_pos` (middle row), the hero at `shop_hero_start` (bottom left), the stairs at `shop_stairs` (bottom right). No monsters, no loot. `in_shop` is true until `loadLevel` clears it.
+`loadShop(n)`: all wall, a lit floor room `shop_room` (x 9..21, y 3..9, centered on the 31x13 map), the shopkeeper at `shopkeeper_pos` (top middle), the 2 items at `shop_item_pos` (middle row), the hero at `shop_hero_start` (bottom left), the stairs at `shop_stairs` (bottom right). No monsters, no loot. `in_shop` is true until `loadLevel` clears it.
 
 - Items are rolled with `randomPotion`, **the same split as a chest's potion** (see [potions.md](potions.md)); two items can be the same kind.
 - The field of view is off in the shop (the room is lit).

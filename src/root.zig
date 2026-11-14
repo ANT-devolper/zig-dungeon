@@ -3,8 +3,8 @@ const std = @import("std");
 
 pub const sound = @import("sound.zig");
 
-pub const W = 30;
-pub const H = 12;
+pub const W = 31;
+pub const H = 13;
 pub const max_monsters = 8;
 pub const max_hp = 10;
 
@@ -331,11 +331,13 @@ pub fn parseCommand(line: []const u8) ?Command {
 
 /// Hand-drawn level used by tests: '#' wall, '.' floor, '@' start,
 /// '>' stairs, 'M' monster and '$' gold. Real levels are generated.
-pub const Layout = [H][]const u8;
+/// Map rows for tests and fixed levels; tiles past the given rows and
+/// columns are wall.
+pub const Layout = []const []const u8;
 
 // Maze generator settings. Maze cells sit on odd coordinates and the even
-// tiles between two cells are walls that can be opened. With the even
-// 30x12 map this leaves column W-2 and row H-2 as an extra wall line.
+// tiles between two cells are walls that can be opened. The odd 31x13 map
+// fits 15x6 cells exactly, with a single wall line on every side.
 const maze_cols = (W - 1) / 2;
 const maze_rows = (H - 1) / 2;
 /// Extra walls opened after the maze is built, to create loops.
@@ -353,12 +355,12 @@ const directions = [_]Pos{
 };
 
 // Shop level layout: one lit room in the middle of the map.
-const shop_room = .{ .x0 = 9, .y0 = 3, .x1 = 20, .y1 = 8 };
-const shopkeeper_pos: Pos = .{ .x = 14, .y = 3 };
+const shop_room = .{ .x0 = 9, .y0 = 3, .x1 = 21, .y1 = 9 };
+const shopkeeper_pos: Pos = .{ .x = 15, .y = 3 };
 /// Where the shop's items lie (`Game.shop_items` in the same order).
-const shop_item_pos = [2]Pos{ .{ .x = 12, .y = 5 }, .{ .x = 17, .y = 5 } };
-const shop_hero_start: Pos = .{ .x = 10, .y = 8 };
-const shop_stairs: Pos = .{ .x = 19, .y = 8 };
+const shop_item_pos = [2]Pos{ .{ .x = 12, .y = 6 }, .{ .x = 18, .y = 6 } };
+const shop_hero_start: Pos = .{ .x = 10, .y = 9 };
+const shop_stairs: Pos = .{ .x = 20, .y = 9 };
 
 /// Map tile at the center of maze cell `c`.
 fn cellTile(c: Pos) Pos {
@@ -702,6 +704,7 @@ pub const Game = struct {
     /// Loads a layout exactly as written (no randomness).
     pub fn loadLayout(g: *Game, layout: Layout) void {
         g.monster_count = 0;
+        for (&g.map) |*row| @memset(row, .wall);
         for (layout, 0..) |row, y| {
             for (row, 0..) |c, x| {
                 const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
@@ -1296,7 +1299,7 @@ fn testGame(prng: *std.Random.DefaultPrng, layout: Layout) Game {
 
 // Small test layout: hero in the middle, wall to the left,
 // gold above, monster to the right and stairs below.
-const test_layout: Layout = .{
+const test_layout: Layout = &.{
     "##############################",
     "#............................#",
     "#............................#",
@@ -1381,7 +1384,7 @@ test "adjacent monster bites the hero" {
 
 test "nearby monster chases the hero" {
     var prng = std.Random.DefaultPrng.init(1);
-    var g = testGame(&prng, .{
+    var g = testGame(&prng, &.{
         "##############################",
         "#@...M.......................#",
         "#............................#",
@@ -1401,7 +1404,7 @@ test "nearby monster chases the hero" {
 
 // Hero in the top-left corner; a monster shut in a 3x3 pocket far away
 // (more than chase_radius tiles), so it can only wander.
-const pocket_layout: Layout = .{
+const pocket_layout: Layout = &.{
     "##############################",
     "#@...........................#",
     "#............................#",
@@ -1435,7 +1438,7 @@ test "far-away monsters wander now and then" {
 
 test "a boxed-in monster cannot wander" {
     var prng = std.Random.DefaultPrng.init(3);
-    var g = testGame(&prng, .{
+    var g = testGame(&prng, &.{
         "##############################",
         "#@...........................#",
         "#............................#",
@@ -1747,7 +1750,7 @@ test "vision works at full health and shows its counter" {
 
 test "vision shows the whole map for the drink round plus 3, then fov comes back" {
     var prng = std.Random.DefaultPrng.init(1);
-    var g = testGame(&prng, .{
+    var g = testGame(&prng, &.{
         "##############################",
         "#@.......................$>..#",
         "#............................#",
@@ -2029,7 +2032,7 @@ test "inventory lists the time stop potion without a size" {
 }
 
 /// Open floor with a chest right of the hero.
-const chest_layout: Layout = .{
+const chest_layout: Layout = &.{
     "##############################",
     "#@&..........................#",
     "#............................#",
@@ -2143,17 +2146,21 @@ test "q quits the game" {
 
 /// Checks every rule a generated level must follow.
 fn expectValidLevel(g: *const Game) !void {
-    // Solid border, plus the extra wall line left by the even map size.
+    // A single solid border: the maze reaches the row and the column next
+    // to it, so no line of the map is wasted.
+    var floor_last_row = false;
+    var floor_last_col = false;
     for (0..W) |x| {
         try testing.expectEqual(Tile.wall, g.map[0][x]);
-        try testing.expectEqual(Tile.wall, g.map[H - 2][x]);
         try testing.expectEqual(Tile.wall, g.map[H - 1][x]);
+        if (g.map[H - 2][x] != .wall) floor_last_row = true;
     }
     for (0..H) |y| {
         try testing.expectEqual(Tile.wall, g.map[y][0]);
-        try testing.expectEqual(Tile.wall, g.map[y][W - 2]);
         try testing.expectEqual(Tile.wall, g.map[y][W - 1]);
+        if (g.map[y][W - 2] != .wall) floor_last_col = true;
     }
+    try testing.expect(floor_last_row and floor_last_col);
 
     try testing.expectEqual(Tile.floor, g.tileAt(g.hero));
     try testing.expect(g.isFullyConnected());
@@ -2262,7 +2269,7 @@ test "a chest without a potion gives 20 to 50 gold" {
 
 test "chests are drawn in magenta and hidden out of sight" {
     var prng = std.Random.DefaultPrng.init(1);
-    var g = testGame(&prng, .{
+    var g = testGame(&prng, &.{
         "##############################",
         "#@.&.....................&...#",
         "#............................#",
@@ -2436,7 +2443,7 @@ test "color render highlights the stairs in yellow" {
 }
 
 // Open room with the hero at (4,5) and a wall segment at x=10.
-const fov_layout: Layout = .{
+const fov_layout: Layout = &.{
     "##############################",
     "#............................#",
     "#............................#",
@@ -2496,7 +2503,7 @@ test "the hero and open neighbors are always visible in generated mazes" {
 
 test "fov render hides what is out of sight" {
     var prng = std.Random.DefaultPrng.init(1);
-    var g = testGame(&prng, .{
+    var g = testGame(&prng, &.{
         "##############################",
         "#@.......................M$>.#",
         "#............................#",
@@ -2532,7 +2539,7 @@ test "fov render hides what is out of sight" {
 
 test "the stairs show through the fov once every monster is defeated" {
     var prng = std.Random.DefaultPrng.init(1);
-    var g = testGame(&prng, .{
+    var g = testGame(&prng, &.{
         "##############################",
         "#@M.......................$>.#",
         "#............................#",
@@ -2560,7 +2567,7 @@ test "the stairs show through the fov once every monster is defeated" {
 
 test "killing the last monster says the stairs are revealed" {
     var prng = std.Random.DefaultPrng.init(1);
-    var g = testGame(&prng, .{
+    var g = testGame(&prng, &.{
         "##############################",
         "#.M.........................>#",
         "#@...........................#",
@@ -2736,7 +2743,7 @@ test "shake shifts the map rows" {
     var prng = std.Random.DefaultPrng.init(1);
     const g = testGame(&prng, test_layout);
     var buf: [4096]u8 = undefined;
-    const row = "##############################\n";
+    const row = @as([W]u8, @splat('#')) ++ "\n"; // the top wall row
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 0 }), "\n\n" ++ row) != null);
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 1 }), "\n\n " ++ row) != null);
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 2 }), "\n\n  " ++ row) != null);
@@ -2808,7 +2815,7 @@ test "the shop counts as a level and its stairs lead to the next one" {
     g.loadShop(3);
     try testing.expectEqual(@as(u32, 3), g.level);
     // Walk along the bottom row to the stairs.
-    for (0..9) |_| g.step(.right);
+    for (0..@intCast(shop_stairs.x - shop_hero_start.x)) |_| g.step(.right);
     try testing.expect(!g.in_shop);
     try testing.expectEqual(@as(u32, 4), g.level);
     try testing.expectEqual(@as(usize, max_monsters), g.monster_count);
