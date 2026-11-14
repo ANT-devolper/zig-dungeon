@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-13
 
-- `(this commit)` chore: rename the game to Brewdungeon. Executable and module are now `brewdungeon`; the header keeps `DUNGEON`.
+- `(this commit)` feat: add a title screen with Play and Quit, and --no-title. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
+- `036dc74` chore: rename the game to Brewdungeon. Executable and module are now `brewdungeon`; the header keeps `DUNGEON`.
 - `8ea1f05` feat: add a ??? potion that is a random potion or a curse. ([potions](features/potions.md), [rounds](features/rounds.md), [fov](features/fov.md), [shop](features/shop.md), [rendering](features/rendering.md), [sound](features/sound.md))
 - `7ad6c29` feat: use the whole map with a 31x13 maze and a single border. ([levels](features/levels.md), [shop](features/shop.md))
 - `920c164` feat: add shop levels where gold buys potions. Each potion kind has its own color (`Potion.color`). ([shop](features/shop.md), [potions](features/potions.md), [levels](features/levels.md), [rendering](features/rendering.md), [sound](features/sound.md))

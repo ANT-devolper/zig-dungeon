@@ -29,6 +29,7 @@ zig build run                    # build and play
 zig build                        # build zig-out/bin/brewdungeon(.exe)
 zig build -Doptimize=ReleaseFast # optimized build
 zig build run -- --mute          # play without sound
+zig build run -- --no-title      # skip the title screen (combines with --mute)
 zig build -Dtarget=x86_64-linux  # cross-compile check (sound is a no-op off Windows)
 ```
 
@@ -36,7 +37,7 @@ Smoke test without a terminal (commands from a file, output to a file; see Gotch
 
 ```sh
 printf "d\nd\ns\nq\n" > in.txt
-./zig-out/bin/brewdungeon.exe --mute < in.txt > out.txt
+./zig-out/bin/brewdungeon.exe --mute --no-title < in.txt > out.txt
 ```
 
 ## Project memory (read this first)
@@ -79,6 +80,7 @@ src/term.zig    raw stdin mode (one key at a time, no echo, Ctrl+C as a key) for
 
 - 0.17 renamed or removed some builtins and std helpers. `zig fmt` rewrites `@intFromEnum` to `@backingInt`, and `std.meta.fields` is a compile error (use `@typeInfo` or `std.enums.values(E)`). Run `zig fmt` after writing code.
 - The array repetition operator `**` no longer compiles in 0.17. Use `@splat`, e.g. `var seen: [H][W]bool = @splat(@splat(false));`.
+- Writing Zig source through a shell heredoc can turn `\x1b` and `\n` inside string literals into raw ESC or newline bytes, which Zig rejects ("string literal contains invalid byte"). Edit `.zig` files with the Edit/Write tools, or write scripts to a file first.
 - On Windows, `zig build` fails at the "install" step if `brewdungeon.exe` is running. Close the game and build again.
 - Lines from a redirected file on Windows may end with `\r\n`. `parseCommand` trims `\r` and the map loop skips whitespace keys, so keep that in mind for any new input parsing.
 - Line endings: `.gitattributes` forces LF (`* text=auto eol=lf`) because local git has `core.autocrlf=true`, which used to rewrite files with CRLF on checkout, and `zig fmt --check` rejects CRLF. Keep the file. A file created with CRLF by a tool is converted on `git add`; `zig fmt` fixes it on disk.

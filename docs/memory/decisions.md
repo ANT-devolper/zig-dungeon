@@ -4,6 +4,8 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-13 | The title screen is small and fits the map's width (31 columns + indent), with the name in a wall frame. | User request (the first banner was 68 columns wide). | `Title.render` |
+| 2026-11-13 | A title screen with Play and Quit (`w`/`s` + Enter, or `p`/`q`). After a run, any key returns to the title; Ctrl+C closes the game. `--no-title` skips the title. | User request and choices. | `Title`, `main.zig`, [features/input-terminal.md](features/input-terminal.md) |
 | 2026-11-13 | The game is called **Brewdungeon** (exe and module `brewdungeon`). The in-game header keeps `DUNGEON  Level N`; the repo stays `zig-dungeon` unless the user renames it on GitHub. | User choice (over Brewdeep and Brewdepth). | `build.zig`, README |
 | 2026-11-13 | After every change, the reply ends with the proposed commit message (before committing), so the user decides. | User rule. | [workflow.md](workflow.md) |
 | 2026-11-13 | The mystery potion's name is just `???` everywhere. | User choice. | `Potion.label` |

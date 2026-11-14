@@ -1445,9 +1445,137 @@ pub const Game = struct {
     }
 };
 
+// ---------------------------------------------------------- title screen
+
+pub const TitleChoice = enum { play, quit };
+
+/// The result of the last run, shown on the title screen.
+pub const LastRun = struct { level: u32, gold: u32 };
+
+/// The game's name, shown in a wall frame as wide as the map.
+const title_name = "B R E W D U N G E O N";
+
+/// The title screen's menu: Play or Quit.
+pub const Title = struct {
+    selected: TitleChoice = .play,
+
+    /// Handles one key. Returns the confirmed choice, if any: Enter confirms
+    /// the selected option, `p` and `q` pick one directly, `w`/`s` move.
+    pub fn key(t: *Title, k: u8) ?TitleChoice {
+        switch (std.ascii.toLower(k)) {
+            'w' => t.selected = .play,
+            's' => t.selected = .quit,
+            '\r' => return t.selected,
+            'p' => return .play,
+            'q' => return .quit,
+            else => {},
+        }
+        return null;
+    }
+
+    /// Draws the title screen to any Writer.
+    /// Every line fits the game's width: the map's `W` columns plus the
+    /// 1-column indent the map rows have.
+    pub fn render(t: *const Title, w: *std.Io.Writer, color: bool, last: ?LastRun) std.Io.Writer.Error!void {
+        const wall: [W]u8 = @splat('#');
+        try w.print("\n {s}\n", .{&wall});
+        try frameLine(w, "", color);
+        try frameLine(w, title_name, color);
+        try frameLine(w, "", color);
+        try w.print(" {s}\n", .{&wall});
+        try w.writeAll("\n");
+        for (std.enums.values(TitleChoice)) |choice| {
+            const name = switch (choice) {
+                .play => "Play",
+                .quit => "Quit",
+            };
+            if (choice == t.selected) {
+                if (color) {
+                    try w.print("           {s}> {s}{s}\n", .{ ansi_cyan, name, ansi_reset });
+                } else {
+                    try w.print("           > {s}\n", .{name});
+                }
+            } else {
+                try w.print("             {s}\n", .{name});
+            }
+        }
+        if (last) |run| {
+            try w.print("\n   Last run: level {d}, {d} gold\n", .{ run.level, run.gold });
+        }
+        try w.writeAll("\n   [w/s] select  [Enter] confirm\n");
+    }
+
+    /// One line inside the frame: `#`, the text centered (yellow), `#`.
+    fn frameLine(w: *std.Io.Writer, text: []const u8, color: bool) std.Io.Writer.Error!void {
+        const inner = W - 2;
+        const left = (inner - text.len) / 2;
+        try w.writeAll(" #");
+        try w.splatByteAll(' ', left);
+        if (color and text.len > 0) {
+            try w.print("{s}{s}{s}", .{ ansi_yellow, text, ansi_reset });
+        } else {
+            try w.writeAll(text);
+        }
+        try w.splatByteAll(' ', inner - left - text.len);
+        try w.writeAll("#\n");
+    }
+};
+
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
+
+test "the title starts on Play and w/s move the cursor" {
+    var t: Title = .{};
+    try testing.expectEqual(TitleChoice.play, t.selected);
+    try testing.expectEqual(@as(?TitleChoice, null), t.key('s'));
+    try testing.expectEqual(TitleChoice.quit, t.selected);
+    _ = t.key('s'); // already at the bottom
+    try testing.expectEqual(TitleChoice.quit, t.selected);
+    _ = t.key('W');
+    try testing.expectEqual(TitleChoice.play, t.selected);
+}
+
+test "Enter confirms the selected option" {
+    var t: Title = .{};
+    try testing.expectEqual(@as(?TitleChoice, .play), t.key('\r'));
+    _ = t.key('s');
+    try testing.expectEqual(@as(?TitleChoice, .quit), t.key('\r'));
+}
+
+test "p and q pick Play and Quit directly" {
+    var t: Title = .{};
+    try testing.expectEqual(@as(?TitleChoice, .quit), t.key('q'));
+    _ = t.key('s');
+    try testing.expectEqual(@as(?TitleChoice, .play), t.key('P'));
+}
+
+test "other keys do nothing on the title" {
+    var t: Title = .{};
+    for ("adx1 .\t") |k| try testing.expectEqual(@as(?TitleChoice, null), t.key(k));
+    try testing.expectEqual(TitleChoice.play, t.selected);
+}
+
+test "the title screen shows the name, the menu and the last run" {
+    var buf: [4096]u8 = undefined;
+    var t: Title = .{};
+    var w: std.Io.Writer = .fixed(&buf);
+    try t.render(&w, false, null);
+    var out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "#    " ++ title_name ++ "    #") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "> Play\n             Quit\n") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "Last run") == null);
+    // It fits the game's width: the map's W columns plus the indent.
+    var lines = std.mem.splitScalar(u8, out, '\n');
+    while (lines.next()) |line| try testing.expect(line.len <= W + 1);
+    _ = t.key('s');
+    w = .fixed(&buf);
+    try t.render(&w, true, .{ .level = 7, .gold = 120 });
+    out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "Play\n           " ++ ansi_cyan ++ "> Quit") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "Last run: level 7, 120 gold") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ title_name ++ ansi_reset) != null);
+}
 
 fn testGame(prng: *std.Random.DefaultPrng, layout: Layout) Game {
     var g: Game = .{ .rng = prng.random() };

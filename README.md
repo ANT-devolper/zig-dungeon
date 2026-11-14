@@ -42,9 +42,16 @@ zig build -Doptimize=ReleaseFast  # optimized build
 ./zig-out/bin/brewdungeon         # on Windows: .\zig-out\bin\brewdungeon.exe
 ```
 
+The game opens on a **title screen** with **Play** and **Quit**: `w`/`s` move the cursor and **Enter** confirms (or press `p` to play, `q` to quit). When a run ends, its last screen stays until you press a key, then the title comes back with your last result, so you can play again. To skip the title and start a run right away:
+
+```sh
+zig build run -- --no-title
+./zig-out/bin/brewdungeon --no-title
+```
+
 ## How to play
 
-The game takes over the whole terminal window while you play, so moves leave no history behind. When it ends, only the last screen and your score (`Final score: reached level N with G gold.`) stay in the terminal.
+The game takes over the whole terminal window while you play, so moves leave no history behind. When you quit, only the last run's screen and its score (`Final score: reached level N with G gold.`) stay in the terminal.
 
 Press a key. It acts at once, with no need to press **Enter**:
 
@@ -57,7 +64,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `.` | wait       |
 | `i` | open the inventory (does not use a turn; any key other than a number closes it) |
 | `1`-`9` | use the item with that number in the inventory (uses a turn), from the inventory or the map |
-| `q` | quit (Ctrl+C also quits) |
+| `q` | give up the run (back to the title; Ctrl+C closes the whole game) |
 
 | Symbol | Meaning            |
 |--------|--------------------|

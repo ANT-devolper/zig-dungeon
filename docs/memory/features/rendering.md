@@ -28,3 +28,4 @@ Code: `Game.render`, `RenderOptions`, `writeHeader`, `renderInventory`, the `ans
 - Sounds are triggered in the same function (see [sound.md](sound.md)).
 - Shop: items `!` in their potion's color (`Potion.color`), the shopkeeper `@` in orange (`ansi_shopkeeper`), a `For sale:` line (`writeForSale`) before the message, no field of view. See [shop.md](shop.md).
 - The hero's `@` is red while hurt or cursed (`isCursed()`), which wins over the speed background.
+- Title screen (`Title.render`): **every line fits the map's width** (`W` + the 1-column indent; a user request, checked by a test). A `#` frame as wide as the map with `B R E W D U N G E O N` centered in yellow (`frameLine`), `> Play` / `  Quit` with the selected line in cyan, `Last run: level N, G gold`, and the help line `[w/s] select  [Enter] confirm` (`p` and `q` still work but are not shown, a user choice). See [input-terminal.md](input-terminal.md).

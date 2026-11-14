@@ -12,9 +12,11 @@ var muted = false;
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
+    var no_title = false;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     for (args[1..]) |arg| {
         if (std.mem.eql(u8, arg, "--mute")) muted = true;
+        if (std.mem.eql(u8, arg, "--no-title")) no_title = true;
     }
     if (!muted) bank.init();
 
@@ -26,8 +28,6 @@ pub fn main(init: std.process.Init) !void {
     var seed_bytes: [8]u8 = undefined;
     io.random(&seed_bytes);
     var prng = std.Random.DefaultPrng.init(std.mem.readInt(u64, &seed_bytes, .little));
-
-    var game = brewdungeon.Game.init(prng.random());
 
     var out_buf: [4096]u8 = undefined;
     var out_file: Io.File.Writer = .init(.stdout(), io, &out_buf);
@@ -43,37 +43,36 @@ pub fn main(init: std.process.Init) !void {
     try out.flush();
     errdefer leaveScreen(out) catch {};
 
-    while (game.state == .playing) {
-        try drawFrame(out, &game, .{ .color = true });
+    // The last run played, printed after leaving the alternate screen.
+    var last: ?brewdungeon.Game = null;
+    if (no_title) {
+        // --no-title: straight into one run.
+        var game = brewdungeon.Game.init(prng.random());
+        _ = try playRun(io, in, out, &game);
+        last = game;
+    } else {
+        var title: brewdungeon.Title = .{};
+        while (true) {
+            try drawTitle(out, &title, last);
+            const key = try readKey(in) orelse break; // EOF
+            if (key == ctrl_c) break;
+            const choice = title.key(key) orelse continue;
+            if (choice == .quit) break;
 
-        const key = try readKey(in) orelse break; // EOF (Ctrl+Z / end of file)
-        // Enter, space and tab do nothing on the map.
-        if (std.ascii.isWhitespace(key)) continue;
-        // Ctrl+C quits through the normal path, so the terminal is restored.
-        if (brewdungeon.parseCommand(&.{if (key == ctrl_c) 'q' else key})) |cmd| {
-            if (cmd == .inventory) {
-                // A pause screen: looking uses no turn. A number uses that item
-                // (which does use a turn); any other key just closes it.
-                try out.writeAll("\x1b[2J\x1b[H");
-                try game.renderInventory(out, true);
-                try out.flush();
-                const choice = try readKey(in) orelse break;
-                if (choice == ctrl_c) {
-                    game.step(.quit);
-                    continue;
-                }
-                if (brewdungeon.parseCommand(&.{choice})) |c| {
-                    if (c.slot() != null) {
-                        game.step(c);
-                        try afterTurn(io, out, &game);
-                    }
-                }
-                continue;
-            }
-            game.step(cmd);
-            try afterTurn(io, out, &game);
-        } else {
-            game.message = "Invalid command. Use w/a/s/d, ., i, 1-9 or q.";
+            var game = brewdungeon.Game.init(prng.random());
+            const exit = try playRun(io, in, out, &game);
+            last = game;
+            if (exit) break;
+
+            // The run is over: its last frame stays until a key, then the
+            // title comes back.
+            try drawFrame(out, &game, .{ .color = true });
+            try out.writeAll("\nPress any key to return to the title.\n");
+            try out.flush();
+            if (game.state == .lost) playSfx(.lost);
+            const any = try readKey(in) orelse break;
+            if (any == ctrl_c) break;
+            title = .{};
         }
     }
 
@@ -81,15 +80,69 @@ pub fn main(init: std.process.Init) !void {
     // the result stays visible after the game exits. No clear here: the
     // terminal's earlier text stays where it was.
     try leaveScreen(out);
+    const game = last orelse return; // quit from the title without playing
     try game.render(out, .{ .color = true, .fov = true });
     try out.print("\nFinal score: reached level {d} with {d} gold.\n", .{ game.level, game.inventory.gold });
     try out.flush();
 
-    // Ending jingle. Wait for it, or it is cut off when the process exits.
-    if (game.state == .lost) {
+    // With --no-title the defeat jingle plays here. Wait for it, or it is
+    // cut off when the process exits.
+    if (no_title and game.state == .lost) {
         playSfx(.lost);
         if (!muted) try io.sleep(Io.Duration.fromMilliseconds(900), .awake);
     }
+}
+
+/// Plays one run until the hero dies or flees. Returns true when the whole
+/// game must close: Ctrl+C or the end of the input.
+fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bool {
+    while (game.state == .playing) {
+        try drawFrame(out, game, .{ .color = true });
+
+        const key = try readKey(in) orelse return true; // EOF (Ctrl+Z / end of file)
+        // Enter, space and tab do nothing on the map.
+        if (std.ascii.isWhitespace(key)) continue;
+        // Ctrl+C closes the game through the normal path, so the terminal
+        // is restored.
+        if (key == ctrl_c) {
+            game.step(.quit);
+            return true;
+        }
+        if (brewdungeon.parseCommand(&.{key})) |cmd| {
+            if (cmd == .inventory) {
+                // A pause screen: looking uses no turn. A number uses that item
+                // (which does use a turn); any other key just closes it.
+                try out.writeAll("\x1b[2J\x1b[H");
+                try game.renderInventory(out, true);
+                try out.flush();
+                const choice = try readKey(in) orelse return true;
+                if (choice == ctrl_c) {
+                    game.step(.quit);
+                    return true;
+                }
+                if (brewdungeon.parseCommand(&.{choice})) |c| {
+                    if (c.slot() != null) {
+                        game.step(c);
+                        try afterTurn(io, out, game);
+                    }
+                }
+                continue;
+            }
+            game.step(cmd);
+            try afterTurn(io, out, game);
+        } else {
+            game.message = "Invalid command. Use w/a/s/d, ., i, 1-9 or q.";
+        }
+    }
+    return false;
+}
+
+/// Clears the screen and draws the title screen.
+fn drawTitle(out: *Io.Writer, title: *const brewdungeon.Title, last: ?brewdungeon.Game) !void {
+    try out.writeAll("\x1b[2J\x1b[H");
+    const run: ?brewdungeon.LastRun = if (last) |g| .{ .level = g.level, .gold = g.inventory.gold } else null;
+    try title.render(out, true, run);
+    try out.flush();
 }
 
 /// Enters the alternate screen and hides the cursor (there is no prompt).

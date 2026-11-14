@@ -7,14 +7,14 @@ build.zig       module "brewdungeon" (src/root.zig) + executable "brewdungeon" (
 build.zig.zon   package manifest (package name `.zig` is tied to the fingerprint; leave it)
 src/root.zig    pure game logic + its tests (also pulls in sound.zig's tests)
 src/sound.zig   sound synthesizer (pure, tested) + PlaySoundA playback (Windows only)
-src/main.zig    entry point: I/O loop, strike/hit animations, sound triggers, --mute
+src/main.zig    entry point: title screen, run loop, strike/hit animations, sound triggers, --mute, --no-title
 src/term.zig    raw stdin mode (one key at a time, no echo, Ctrl+C as a key) for Windows and POSIX
 ```
 
 ## Split between logic and I/O
 
 - **`src/root.zig` does no I/O.** It holds the map, turns, monster AI and rendering. `Game.render(w, RenderOptions)` writes to any `*std.Io.Writer`, which is what makes the logic testable without a terminal. **New game logic goes here**, with tests.
-- **`src/main.zig` is a thin shell.** Startup: parse `--mute`, build the sound `Bank`, turn on `term.RawMode`, seed the RNG from `io.random`, enter the alternate screen. Loop: `drawFrame` (always with `fov = true`), `readKey`, `parseCommand(&.{key})`, `Game.step`, then `afterTurn` plays sounds and animations in turn order. End: leave the alternate screen, print the last frame and the final score, play the ending jingle and wait about 900 ms. Details in [features/input-terminal.md](features/input-terminal.md) and [features/rendering.md](features/rendering.md).
+- **`src/main.zig` is a thin shell.** Startup: parse `--mute` and `--no-title`, build the sound `Bank`, turn on `term.RawMode`, seed the RNG from `io.random`, enter the alternate screen. Title loop (unless `--no-title`): `drawTitle`, `Title.key`, Play runs `playRun`, then back to the title. Run loop (`playRun`): `drawFrame` (always with `fov = true`), `readKey`, `parseCommand(&.{key})`, `Game.step`, then `afterTurn` plays sounds and animations in turn order. End: leave the alternate screen, print the last run's frame and final score (with `--no-title`, play the defeat jingle and wait about 900 ms). Details in [features/input-terminal.md](features/input-terminal.md) and [features/rendering.md](features/rendering.md).
 
 ## Game state (`Game` in `src/root.zig`)
 
