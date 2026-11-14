@@ -1,13 +1,13 @@
 # Chests and potions
 
-Code: `Potion` (`heal`, `strength`, `fromRoll`, `strengthFromRoll`, `label`), the `.chest` branch of `Game.step`, `Game.drink`, the `*_chance` and `*_turns` constants in `src/root.zig`.
+Code: `Potion` (`heal`, `strength`, `fromRoll`, `strengthFromRoll`, `label`, `price`), `Game.randomPotion`, the `.chest` branch of `Game.step`, `Game.drink`, the `*_chance` and `*_turns` constants in `src/root.zig`.
 
 ## What a chest holds
 
 A chest (25% of item spots, see [levels.md](levels.md)) holds **a potion or gold, never both** (a user rule). Rolled when it is opened:
 
 1. `chest_potion_chance` (**85%**, a user choice): a potion. Otherwise 20-50 gold (`chest_gold_min`..`chest_gold_max`), stored in `Game.chest_gold`.
-2. Potion kind, one roll in 0..99, in this order:
+2. Potion kind (`randomPotion`, also used for the [shop](shop.md)'s items), one roll in 0..99, in this order:
 
 | Roll | Kind | Constant |
 |---|---|---|
@@ -21,7 +21,9 @@ A chest (25% of item spots, see [levels.md](levels.md)) holds **a potion or gold
 
 Overall per chest: gold 15%, health 42.5% (small 21.25, medium 14.875, large 6.375), strength 12.75%, speed 12.75%, time stop 8.5%, vision 8.5%.
 
-The result is stored in `Game.chest_potion` (or `Game.chest_gold`) for that turn; `render` appends "(<label>)" or "(+N gold)". Use `Potion.label()` for names, not `@tagName`.
+The result is stored in `Game.chest_potion` (or `Game.chest_gold`) for that turn; `render` appends "(<label>)" or "(+N gold)". Use `Potion.label()` for names, not `@tagName`. Shop prices: `Potion.price()` (see [shop.md](shop.md)).
+
+Colors (`Potion.color()`, used for the shop's `!` and the names on the inventory screen): health green (`ansi_green`), strength brown (`ansi_brown`, 256-color 130), time stop yellow (`ansi_yellow`), vision purple (`ansi_purple`, 256-color 129), speed blue (`ansi_blue`). All user choices.
 
 ## Potion kinds
 

@@ -65,6 +65,8 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `$`    | gold, +10 (green)  |
 | `&`    | chest: 20-50 gold or a potion (magenta) |
 | `>`    | stairs, your goal (yellow) |
+| `!`    | potion for sale in a shop: health green, strength brown, time stop yellow, vision purple, speed blue |
+| `@`    | the shopkeeper (orange) |
 | `#`    | wall               |
 
 ### Rules
@@ -86,11 +88,23 @@ Press a key. It acts at once, with no need to press **Enter**:
 - **Vision** lets you see the whole map (monsters, gold, chests and the stairs) for the round you drink it and 3 more rounds. The status line shows `VISION N`, the rounds left. Drinking another one resets it to 3. It works at full health.
 - **Effects combine.** With speed and time stop together, each frozen round lasts 2 of your actions, so `TIME STOP` only drops once for every 2 actions. Strength and vision work with all of them too, and with speed they last 2 actions per round.
 - Potions go to your inventory, which numbers items in the order you picked them up. When an item runs out, the ones below move up, so the numbers are always 1, 2, 3... Drinking uses a turn and never heals past 10 HP. Typing a number with no item, or drinking at full health, uses no turn.
+- **Shops.** Gold buys potions. On the stairs of every even level (2, 4, 6...) the next level may be a **shop**: 80% the first time, 50% every later time. Right after a shop, the next chance is skipped. A shop counts as a level. It is one lit room with the shopkeeper (an orange `@`), 2 potions on the floor (`!`, rolled like a chest's potion) and the stairs. Walk over a potion to buy it; without enough gold it stays there. Prices follow rarity:
+
+  | Potion | Price |
+  |---|---|
+  | small health | 10 |
+  | medium health | 15 |
+  | speed | 20 |
+  | time stop, vision | 25 |
+  | large health, small strength | 30 |
+  | medium strength | 45 |
+  | large strength | 70 |
+
 - If your HP reaches 0, the game is over. Your score is the deepest level you reached, plus your gold.
 
 ## Sound
 
-On Windows the game plays retro sound effects for strikes, kills, damage, gold, stairs and defeat. They are synthesized in code (square waves, noise and pitch sweeps) into in-memory WAV files, so there are no audio assets or libraries. On other systems the game is silent.
+On Windows the game plays retro sound effects for strikes, kills, damage, gold, stairs, shopping and defeat. They are synthesized in code (square waves, noise and pitch sweeps) into in-memory WAV files, so there are no audio assets or libraries. On other systems the game is silent.
 
 To play without sound:
 

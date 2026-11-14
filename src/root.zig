@@ -36,6 +36,11 @@ pub const strength_turns = 3;
 const vision_chance = 10;
 /// Rounds the hero sees the whole map after the round it was drunk in.
 pub const vision_turns = 3;
+/// Chance (in %) that the shop shows up the first time its event is called
+/// (on the stairs of every even level, see `Game.nextLevel`).
+const shop_first_chance = 80;
+/// Chance (in %) that the shop shows up on every later call.
+const shop_chance = 50;
 
 /// Potion kinds the hero can carry: three sizes of health potion, three
 /// sizes of strength potion, plus the time stop, speed and vision potions,
@@ -106,6 +111,34 @@ pub const Potion = enum {
         };
     }
 
+    /// ANSI color of each kind (the shop's '!' and the inventory names):
+    /// health green, strength brown, time stop yellow, vision purple,
+    /// speed blue.
+    pub fn color(p: Potion) []const u8 {
+        return switch (p) {
+            .small, .medium, .large => ansi_green,
+            .strength_small, .strength_medium, .strength_large => ansi_brown,
+            .time_stop => ansi_yellow,
+            .vision => ansi_purple,
+            .speed => ansi_blue,
+        };
+    }
+
+    /// Shop price in gold: rarer potions cost more.
+    pub fn price(p: Potion) u32 {
+        return switch (p) {
+            .small => 10,
+            .medium => 15,
+            .speed => 20,
+            .time_stop => 25,
+            .vision => 25,
+            .large => 30,
+            .strength_small => 30,
+            .strength_medium => 45,
+            .strength_large => 70,
+        };
+    }
+
     fn index(p: Potion) usize {
         return @backingInt(p);
     }
@@ -166,12 +199,15 @@ const ansi_yellow = "\x1b[1;33m";
 const ansi_cyan = "\x1b[1;36m";
 const ansi_green = "\x1b[1;32m";
 const ansi_magenta = "\x1b[1;35m";
-const ansi_blue = "\x1b[1;34m"; // frozen monsters (time stop)
+const ansi_blue = "\x1b[1;34m"; // frozen monsters (time stop), speed potions
 const ansi_fast = "\x1b[1;30;46m"; // black on cyan: the hero while fast (speed)
 const ansi_dim = "\x1b[38;5;248m"; // light gray: out of sight
 const ansi_bite = "\x1b[1;37;41m"; // white on red: the monster that just bit
 const ansi_red_bg = "\x1b[41m";
 const ansi_spark = "\x1b[1;37;45m";
+const ansi_shopkeeper = "\x1b[1;38;5;208m"; // orange: the shopkeeper's '@'
+const ansi_purple = "\x1b[1;38;5;129m"; // vision potions
+const ansi_brown = "\x1b[1;38;5;130m"; // strength potions
 
 pub const Command = enum {
     up,
@@ -272,6 +308,7 @@ pub const Events = struct {
     strength: bool = false,
     vision: bool = false,
     stairs: bool = false,
+    buy: bool = false,
     lost: bool = false,
 };
 
@@ -314,6 +351,14 @@ const directions = [_]Pos{
     .{ .x = -1, .y = 0 },
     .{ .x = 1, .y = 0 },
 };
+
+// Shop level layout: one lit room in the middle of the map.
+const shop_room = .{ .x0 = 9, .y0 = 3, .x1 = 20, .y1 = 8 };
+const shopkeeper_pos: Pos = .{ .x = 14, .y = 3 };
+/// Where the shop's items lie (`Game.shop_items` in the same order).
+const shop_item_pos = [2]Pos{ .{ .x = 12, .y = 5 }, .{ .x = 17, .y = 5 } };
+const shop_hero_start: Pos = .{ .x = 10, .y = 8 };
+const shop_stairs: Pos = .{ .x = 19, .y = 8 };
 
 /// Map tile at the center of maze cell `c`.
 fn cellTile(c: Pos) Pos {
@@ -360,6 +405,18 @@ pub const Game = struct {
     vision_fresh: bool = false,
     /// A fast hero already used the first of the 2 actions of this round.
     half_round: bool = false,
+    /// The current level is a shop (see `loadShop`).
+    in_shop: bool = false,
+    /// Times the shop event was called (the first call has a higher chance).
+    shop_calls: u32 = 0,
+    /// A shop just showed up, so the next chance is skipped (no roll).
+    shop_skip: bool = false,
+    /// What the shop still sells, at `shop_item_pos` (null once bought).
+    shop_items: [2]?Potion = @splat(null),
+    /// Item bought during the last turn, if any.
+    shop_bought: ?Potion = null,
+    /// Item the hero stepped on without enough gold during the last turn.
+    shop_refused: ?Potion = null,
     events: Events = .{},
     rng: std.Random,
 
@@ -374,9 +431,93 @@ pub const Game = struct {
     /// Generates level `n` (1, 2, ... with no end), keeping HP and gold.
     pub fn loadLevel(g: *Game, n: u32) void {
         g.level = n;
+        g.in_shop = false;
+        g.shop_items = @splat(null);
         g.generateLevel();
         g.spawnLoot();
         g.spawnMonsters(@min(max_monsters, 1 + n * 2));
+    }
+
+    /// Makes level `n` a shop: one lit room with the shopkeeper, two potions
+    /// for sale (rolled like a chest's) and the stairs. No monsters, no loot.
+    pub fn loadShop(g: *Game, n: u32) void {
+        g.level = n;
+        g.in_shop = true;
+        g.monster_count = 0;
+        for (&g.map) |*row| @memset(row, .wall);
+        var y: i32 = shop_room.y0;
+        while (y <= shop_room.y1) : (y += 1) {
+            var x: i32 = shop_room.x0;
+            while (x <= shop_room.x1) : (x += 1) g.setTile(.{ .x = x, .y = y }, .floor);
+        }
+        g.hero = shop_hero_start;
+        g.setTile(shop_stairs, .stairs);
+        for (&g.shop_items) |*item| item.* = g.randomPotion();
+    }
+
+    /// Takes the stairs: the next level, or a shop. The shop event is called
+    /// on the stairs of every even level, unless a shop just showed up.
+    fn nextLevel(g: *Game) void {
+        const n = g.level + 1;
+        if (g.in_shop or g.level % 2 != 0) return g.loadLevel(n);
+        if (g.shop_skip) {
+            g.shop_skip = false; // the chance after a shop is skipped
+            return g.loadLevel(n);
+        }
+        const chance: u8 = if (g.shop_calls == 0) shop_first_chance else shop_chance;
+        g.shop_calls += 1;
+        if (g.rng.uintLessThan(u8, 100) < chance) {
+            g.shop_skip = true;
+            g.loadShop(n);
+        } else {
+            g.loadLevel(n);
+        }
+    }
+
+    /// The shop item at `p`, if any (its index in `shop_items`).
+    fn shopItemAt(g: *const Game, p: Pos) ?usize {
+        if (!g.in_shop) return null;
+        for (shop_item_pos, 0..) |ip, i| {
+            if (ip.eql(p) and g.shop_items[i] != null) return i;
+        }
+        return null;
+    }
+
+    fn isShopkeeper(g: *const Game, p: Pos) bool {
+        return g.in_shop and p.eql(shopkeeper_pos);
+    }
+
+    /// The hero stands on shop item `i`: buys it if the gold is enough.
+    /// render() appends the item and price to the message.
+    fn buy(g: *Game, i: usize) void {
+        const p = g.shop_items[i].?;
+        if (g.inventory.gold < p.price()) {
+            g.shop_refused = p;
+            g.message = "Not enough gold.";
+            return;
+        }
+        g.inventory.gold -= p.price();
+        g.inventory.add(p);
+        g.shop_items[i] = null;
+        g.shop_bought = p;
+        g.events.buy = true;
+        g.message = "You bought it!";
+    }
+
+    /// Rolls a potion with the chest split (time stop, speed, strength,
+    /// vision, health). Chests and the shop use it.
+    fn randomPotion(g: *Game) Potion {
+        const roll = g.rng.uintLessThan(u8, 100);
+        return if (roll < time_stop_chance)
+            .time_stop
+        else if (roll < time_stop_chance + speed_chance)
+            .speed
+        else if (roll < time_stop_chance + speed_chance + strength_chance)
+            Potion.strengthFromRoll(g.rng.uintLessThan(u8, 100))
+        else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance)
+            .vision
+        else
+            Potion.fromRoll(g.rng.uintLessThan(u8, 100));
     }
 
     /// Builds a random maze with a few shortcuts, puts the hero in a maze
@@ -640,6 +781,8 @@ pub const Game = struct {
         g.chest_gold = 0;
         g.chest_potion = null;
         g.healed = 0;
+        g.shop_bought = null;
+        g.shop_refused = null;
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
 
         switch (cmd) {
@@ -674,11 +817,14 @@ pub const Game = struct {
                     } else {
                         g.message = "You hit the monster.";
                     }
+                } else if (g.isShopkeeper(target)) {
+                    g.message = "The shopkeeper smiles. Walk over an item to buy it.";
                 } else switch (g.tileAt(target)) {
                     .wall => g.message = "A wall blocks the way.",
                     .floor => {
                         g.hero = target;
                         g.message = "";
+                        if (g.shopItemAt(target)) |i| g.buy(i);
                     },
                     .gold => {
                         g.hero = target;
@@ -692,17 +838,7 @@ pub const Game = struct {
                         g.events.chest = true;
                         // A chest holds either a potion or gold, never both.
                         if (g.rng.uintLessThan(u8, 100) < chest_potion_chance) {
-                            const roll = g.rng.uintLessThan(u8, 100);
-                            const kind: Potion = if (roll < time_stop_chance)
-                                .time_stop
-                            else if (roll < time_stop_chance + speed_chance)
-                                .speed
-                            else if (roll < time_stop_chance + speed_chance + strength_chance)
-                                Potion.strengthFromRoll(g.rng.uintLessThan(u8, 100))
-                            else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance)
-                                .vision
-                            else
-                                Potion.fromRoll(g.rng.uintLessThan(u8, 100));
+                            const kind = g.randomPotion();
                             g.inventory.add(kind);
                             g.chest_potion = kind;
                         } else {
@@ -715,9 +851,12 @@ pub const Game = struct {
                     },
                     .stairs => {
                         // The dungeon has no bottom: always one level deeper.
-                        g.loadLevel(g.level + 1);
+                        g.nextLevel();
                         g.events.stairs = true;
-                        g.message = "You go down the stairs...";
+                        g.message = if (g.in_shop)
+                            "You found a shop! Walk over an item to buy it."
+                        else
+                            "You go down the stairs...";
                         g.half_round = false; // a new level starts a new round
                         return; // new level: monsters do not act this turn
                     },
@@ -954,7 +1093,8 @@ pub const Game = struct {
     pub fn render(g: *const Game, w: *std.Io.Writer, opts: RenderOptions) std.Io.Writer.Error!void {
         const hurt = g.damage_taken > 0;
         // A vision potion lifts the field of view: the whole map is drawn.
-        const seen: ?[H][W]bool = if (opts.fov and !g.hasVision()) g.visibility() else null;
+        // So does a shop: its room is lit.
+        const seen: ?[H][W]bool = if (opts.fov and !g.hasVision() and !g.in_shop) g.visibility() else null;
         try g.writeHeader(w);
         for (0..H) |y| {
             try w.splatByteAll(' ', opts.shake);
@@ -980,6 +1120,12 @@ pub const Game = struct {
                     // The hero always stands out: cyan, or red when just hurt.
                     color = if (hurt) ansi_red else if (g.isFast()) ansi_fast else ansi_cyan;
                     break :blk '@';
+                } else if (g.isShopkeeper(p)) blk: {
+                    color = ansi_shopkeeper;
+                    break :blk '@';
+                } else if (g.shopItemAt(p)) |i| blk: {
+                    color = g.shop_items[i].?.color();
+                    break :blk '!';
                 } else if (g.monsterAt(p)) |i| blk: {
                     color = if (g.timeStopped())
                         ansi_blue
@@ -1013,7 +1159,16 @@ pub const Game = struct {
             if (opts.flash) try w.writeAll(ansi_reset);
             try w.writeByte('\n');
         }
+        if (g.in_shop) try g.writeForSale(w);
         try w.print("\n{s}", .{g.message});
+        if (g.shop_bought) |p| {
+            if (opts.color) try w.writeAll(ansi_green);
+            try w.print(" ({s}, -{d} gold)", .{ p.label(), p.price() });
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
+        if (g.shop_refused) |p| {
+            try w.print(" (the {s} costs {d} gold, you have {d})", .{ p.label(), p.price(), g.inventory.gold });
+        }
         if (g.events.chest) {
             if (opts.color) try w.writeAll(ansi_green);
             if (g.chest_potion) |p| {
@@ -1043,10 +1198,23 @@ pub const Game = struct {
         }
     }
 
+    /// The shop's line under the map: what is left and the prices.
+    fn writeForSale(g: *const Game, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.writeAll("\nFor sale:");
+        var any = false;
+        for (g.shop_items) |item| {
+            const p = item orelse continue;
+            try w.print("{s} {s} {d} gold", .{ if (any) "," else "", p.label(), p.price() });
+            any = true;
+        }
+        if (!any) try w.writeAll(" sold out");
+        try w.writeByte('\n');
+    }
+
     /// Status line shared by the map and the inventory screen.
     fn writeHeader(g: *const Game, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        try w.print("DUNGEON  Level {d}   HP {d}/{d}   Gold {d}", .{
-            g.level, g.hp, max_hp, g.inventory.gold,
+        try w.print("DUNGEON  Level {d}{s}   HP {d}/{d}   Gold {d}", .{
+            g.level, if (g.in_shop) " (SHOP)" else "", g.hp, max_hp, g.inventory.gold,
         });
         if (g.time_stop > 0) try w.print("   TIME STOP {d}", .{g.time_stop});
         if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
@@ -1083,7 +1251,11 @@ pub const Game = struct {
                 .strength_large => "Large strength potion  (+3 dmg, 3 turns)",
                 .vision => "Vision potion        (3 turns)",
             };
-            try w.print("  {d}) {s} ..... x", .{ number, label });
+            if (color) {
+                try w.print("  {d}) {s}{s}{s} ..... x", .{ number, p.color(), label, ansi_reset });
+            } else {
+                try w.print("  {d}) {s} ..... x", .{ number, label });
+            }
             try writeAmount(w, color, inv.potionCount(p));
             try w.writeByte('\n');
         }
@@ -2568,4 +2740,183 @@ test "shake shifts the map rows" {
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 0 }), "\n\n" ++ row) != null);
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 1 }), "\n\n " ++ row) != null);
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 2 }), "\n\n  " ++ row) != null);
+}
+
+/// Counts how often the stairs of level 2 lead to a shop over 1000 seeds,
+/// with the shop event already called `calls` times before.
+fn countShops(calls: u32) usize {
+    var shops: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 1000) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, test_layout);
+        g.level = 2;
+        g.shop_calls = calls;
+        g.step(.down); // the stairs
+        if (g.in_shop) shops += 1;
+    }
+    return shops;
+}
+
+test "the shop event shows up 80% the first time and 50% after" {
+    const first = countShops(0);
+    try testing.expect(first >= 750 and first <= 850);
+    const later = countShops(1);
+    try testing.expect(later >= 450 and later <= 550);
+}
+
+test "after a shop shows up, the next chance is skipped" {
+    // Find a game whose level 2 stairs lead to a shop.
+    var seed: u64 = 0;
+    while (true) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, test_layout);
+        g.level = 2;
+        g.step(.down);
+        if (!g.in_shop) continue;
+        try testing.expectEqual(@as(u32, 3), g.level);
+        try testing.expectEqual(@as(u32, 1), g.shop_calls);
+        g.nextLevel(); // the shop's stairs: level 4, no call
+        g.nextLevel(); // level 4's stairs: skipped, no roll
+        try testing.expect(!g.in_shop);
+        try testing.expectEqual(@as(u32, 5), g.level);
+        try testing.expectEqual(@as(u32, 1), g.shop_calls);
+        g.nextLevel(); // level 5 is odd: no call
+        g.nextLevel(); // level 6's stairs: the event is called again
+        try testing.expectEqual(@as(u32, 2), g.shop_calls);
+        break;
+    }
+}
+
+test "the shop event only runs on the stairs of even levels" {
+    var seed: u64 = 0;
+    while (seed < 200) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        g.nextLevel(); // 1 -> 2
+        try testing.expect(!g.in_shop);
+        g.level = 3;
+        g.nextLevel(); // 3 -> 4
+        try testing.expect(!g.in_shop);
+        try testing.expectEqual(@as(u32, 0), g.shop_calls);
+    }
+}
+
+test "the shop counts as a level and its stairs lead to the next one" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.loadShop(3);
+    try testing.expectEqual(@as(u32, 3), g.level);
+    // Walk along the bottom row to the stairs.
+    for (0..9) |_| g.step(.right);
+    try testing.expect(!g.in_shop);
+    try testing.expectEqual(@as(u32, 4), g.level);
+    try testing.expectEqual(@as(usize, max_monsters), g.monster_count);
+}
+
+test "a shop has a shopkeeper, two items and no monsters" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.loadShop(3);
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+    try testing.expect(g.shop_items[0] != null and g.shop_items[1] != null);
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .fov = true, .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, "Level 3 (SHOP)") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_shopkeeper ++ "@" ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_cyan ++ "@" ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, "!" ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, "For sale: ") != null);
+    // The room is lit: the far stairs show through the field of view.
+    try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ ">" ++ ansi_reset) != null);
+}
+
+test "walking over an item buys it when the gold is enough" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.loadShop(3);
+    g.shop_items = .{ .speed, .vision };
+    g.inventory.gold = 50;
+    g.hero = shop_item_pos[0].add(.{ .x = 0, .y = 1 });
+    g.step(.up);
+    try testing.expect(g.hero.eql(shop_item_pos[0]));
+    try testing.expectEqual(@as(u32, 30), g.inventory.gold);
+    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.speed));
+    try testing.expectEqual(@as(?Potion, null), g.shop_items[0]);
+    try testing.expect(g.events.buy);
+    var buf: [8192]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "You bought it! (speed potion, -20 gold)") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "For sale: vision potion 25 gold\n") != null);
+}
+
+test "an item stays when the gold is not enough" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.loadShop(3);
+    g.shop_items = .{ .speed, .vision };
+    g.inventory.gold = 5;
+    g.hero = shop_item_pos[0].add(.{ .x = 0, .y = 1 });
+    g.step(.up);
+    try testing.expect(g.hero.eql(shop_item_pos[0]));
+    try testing.expectEqual(@as(u32, 5), g.inventory.gold);
+    try testing.expectEqual(@as(?Potion, .speed), g.shop_items[0]);
+    try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
+    try testing.expect(!g.events.buy);
+    var buf: [8192]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "Not enough gold. (the speed potion costs 20 gold, you have 5)") != null);
+    // Stepping off and on again with enough gold buys it.
+    g.step(.down);
+    g.inventory.gold = 20;
+    g.step(.up);
+    try testing.expectEqual(@as(u32, 0), g.inventory.gold);
+    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.speed));
+}
+
+test "the shopkeeper blocks the way" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.loadShop(3);
+    const start = shopkeeper_pos.add(.{ .x = 0, .y = 1 });
+    g.hero = start;
+    g.step(.up);
+    try testing.expect(g.hero.eql(start));
+    try testing.expectEqualStrings("The shopkeeper smiles. Walk over an item to buy it.", g.message);
+}
+
+test "prices follow rarity" {
+    // Chance of each kind in a chest or shop potion roll, in 1/10000.
+    const chance = [Potion.count]u32{ 2500, 1750, 750, 1000, 1500, 750, 525, 225, 1000 };
+    const prices = [Potion.count]u32{ 10, 15, 30, 25, 20, 30, 45, 70, 25 };
+    for (std.enums.values(Potion), 0..) |a, i| {
+        try testing.expectEqual(prices[i], a.price());
+        for (std.enums.values(Potion), 0..) |b, j| {
+            // Rarer is more expensive; just as rare costs the same.
+            if (chance[i] < chance[j]) try testing.expect(a.price() > b.price());
+            if (chance[i] == chance[j]) try testing.expectEqual(a.price(), b.price());
+        }
+    }
+}
+
+test "each potion kind has its color in the shop and the inventory" {
+    try testing.expectEqualStrings(ansi_purple, Potion.vision.color());
+    for ([_]Potion{ .small, .medium, .large }) |p| try testing.expectEqualStrings(ansi_green, p.color());
+    for ([_]Potion{ .strength_small, .strength_medium, .strength_large }) |p| try testing.expectEqualStrings(ansi_brown, p.color());
+    try testing.expectEqualStrings(ansi_yellow, Potion.time_stop.color());
+    try testing.expectEqualStrings(ansi_blue, Potion.speed.color());
+
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.loadShop(3);
+    g.shop_items = .{ .vision, .strength_large };
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_purple ++ "!" ++ ansi_reset) != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_brown ++ "!" ++ ansi_reset) != null);
+
+    g.inventory.add(.time_stop);
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, true);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), ansi_yellow ++ "Time stop potion") != null);
 }

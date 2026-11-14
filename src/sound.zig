@@ -35,6 +35,7 @@ pub const Sfx = enum {
     strength,
     vision,
     stairs,
+    buy,
     lost,
 
     pub fn notes(s: Sfx) []const Note {
@@ -52,6 +53,12 @@ pub const Sfx = enum {
             .gold => &.{
                 .{ .freq_start = 990, .ms = 60, .volume = 0.3 },
                 .{ .freq_start = 1320, .ms = 140, .volume = 0.3 },
+            },
+            .buy => &.{
+                .{ .freq_start = 1320, .ms = 50, .volume = 0.3 },
+                .{ .freq_start = 1760, .ms = 50, .volume = 0.3 },
+                .{ .freq_start = 1320, .ms = 50, .volume = 0.3 },
+                .{ .freq_start = 1760, .ms = 120, .volume = 0.3 },
             },
             .chest => &.{
                 .{ .freq_start = 784, .ms = 80, .volume = 0.3 },

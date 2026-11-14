@@ -19,6 +19,7 @@ If a page and the code disagree, **the code wins**: fix the page in the same cha
 | Field of view, fog | [features/fov.md](features/fov.md) | `visibility`, `lineIsClear`, `view_radius` |
 | Monster AI, combat numbers | [features/monsters.md](features/monsters.md) | `monstersTurn`, `moveMonsterToward`, `wander` |
 | Inventory, item numbers, `i` screen | [features/inventory.md](features/inventory.md) | `Inventory.add/remove`, `renderInventory`, `Command.use_N` |
+| Shop levels, prices, buying | [features/shop.md](features/shop.md) | `nextLevel`, `loadShop`, `buy`, `Potion.price` |
 | Chests and all potions | [features/potions.md](features/potions.md) | `Potion`, `drink`, `chest_*_chance` |
 | Rounds, timed effects, speed | [features/rounds.md](features/rounds.md) | `endRound`, `half_round`, `*_fresh` |
 | Keyboard input, terminal, alternate screen | [features/input-terminal.md](features/input-terminal.md) | `term.RawMode`, `readKey`, `alt_screen_on` |

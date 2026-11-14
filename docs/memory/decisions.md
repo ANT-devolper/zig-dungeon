@@ -4,6 +4,11 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-13 | Potion colors: vision purple, health green, strength brown, time stop yellow, speed blue. Used for the shop's `!` and inventory names. | User request. | `Potion.color` |
+| 2026-11-13 | Shop event on the stairs of every even level: 80% the first call, 50% after. Right after a shop the next chance is skipped (not called). | User rules. | `nextLevel`, [features/shop.md](features/shop.md) |
+| 2026-11-13 | The shop counts as a level. | User choice. | `loadShop` |
+| 2026-11-13 | A shop sells 2 potions rolled like a chest's, on the floor; walking over one buys it; the shopkeeper is an `@` in another color (orange). | User rules. | `buy`, `randomPotion` |
+| 2026-11-13 | Prices follow rarity: 10, 15, 20, 25, 25, 30, 30, 45, 70 (health S, health M, speed, time stop, vision, health L, strength S, M, L). | User-approved table. | `Potion.price` |
 | 2026-11-13 | The dungeon is endless: the goal is to reach the deepest level. No win state. | User request. | `loadLevel`, [features/levels.md](features/levels.md) |
 | 2026-11-13 | Difficulty past level 4: still 8 monsters, **+1 monster HP every 3 levels**, bite stays 1. | User choice (over stronger bites or more monsters). | `monsterHp`, [features/monsters.md](features/monsters.md) |
 | 2026-11-13 | No saved record between runs; the final score is the level reached plus gold. | User choice. | `main.zig` |

@@ -61,7 +61,7 @@ src/term.zig    raw stdin mode (one key at a time, no echo, Ctrl+C as a key) for
 
 - **`src/root.zig` does no I/O** and holds all game logic; `Game.render` writes to any `*std.Io.Writer`, so everything is testable. **`src/main.zig` is a thin shell.** See [architecture.md](docs/memory/architecture.md).
 - **No allocations** (fixed arrays). **Randomness** only through `Game.rng`; tests use `testGame(&prng, layout)` with a fixed seed.
-- Systems: [levels](docs/memory/features/levels.md), [field of view](docs/memory/features/fov.md), [monsters](docs/memory/features/monsters.md), [inventory](docs/memory/features/inventory.md), [chests and potions](docs/memory/features/potions.md), [rounds and timed effects](docs/memory/features/rounds.md), [input and terminal](docs/memory/features/input-terminal.md), [rendering](docs/memory/features/rendering.md), [sound](docs/memory/features/sound.md).
+- Systems: [levels](docs/memory/features/levels.md), [field of view](docs/memory/features/fov.md), [monsters](docs/memory/features/monsters.md), [inventory](docs/memory/features/inventory.md), [chests and potions](docs/memory/features/potions.md), [shop](docs/memory/features/shop.md), [rounds and timed effects](docs/memory/features/rounds.md), [input and terminal](docs/memory/features/input-terminal.md), [rendering](docs/memory/features/rendering.md), [sound](docs/memory/features/sound.md).
 - User rules that are easy to break are listed in [decisions.md](docs/memory/decisions.md). Do not undo one without asking.
 
 ## Conventions

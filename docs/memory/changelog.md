@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-13
 
-- `(this commit)` feat: make the dungeon endless with tougher monsters every 3 levels. No win, no `last_level`; monster HP grows; `Sfx.won` removed. ([levels](features/levels.md), [monsters](features/monsters.md), [rendering](features/rendering.md), [sound](features/sound.md))
+- `(this commit)` feat: add shop levels where gold buys potions. Each potion kind has its own color (`Potion.color`). ([shop](features/shop.md), [potions](features/potions.md), [levels](features/levels.md), [rendering](features/rendering.md), [sound](features/sound.md))
+- `0319674` feat: make the dungeon endless with tougher monsters every 3 levels. No win, no `last_level`; monster HP grows; `Sfx.won` removed. ([levels](features/levels.md), [monsters](features/monsters.md), [rendering](features/rendering.md), [sound](features/sound.md))
 - `39ef9c2` feat: reveal the stairs once every monster on the level is defeated. ([fov](features/fov.md), [monsters](features/monsters.md))
 - `d4be073` build: force LF line endings with .gitattributes. Fixes `zig fmt --check` failing and files showing as modified after a checkout (`core.autocrlf=true`). ([backlog](backlog.md) item closed)
 - `7f98ae6` docs: add a durable project memory in docs/memory. Created this folder; moved the per-system details out of `CLAUDE.md`; added the decisions, changelog, workflow and backlog logs.
