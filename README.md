@@ -1,6 +1,6 @@
-# zig-dungeon
+# Brewdungeon
 
-A small turn-based dungeon crawler for the terminal, written in [Zig](https://ziglang.org/).
+Brewdungeon is a small turn-based dungeon crawler for the terminal, written in [Zig](https://ziglang.org/).
 
 ```
 DUNGEON  Level 1   HP 10/10   Gold 0
@@ -39,7 +39,7 @@ Or build the executable and run it directly:
 ```sh
 zig build                         # debug build
 zig build -Doptimize=ReleaseFast  # optimized build
-./zig-out/bin/dungeon             # on Windows: .\zig-out\bin\dungeon.exe
+./zig-out/bin/brewdungeon         # on Windows: .\zig-out\bin\brewdungeon.exe
 ```
 
 ## How to play
@@ -117,7 +117,7 @@ To play without sound:
 
 ```sh
 zig build run -- --mute
-./zig-out/bin/dungeon --mute
+./zig-out/bin/brewdungeon --mute
 ```
 
 ## Tests

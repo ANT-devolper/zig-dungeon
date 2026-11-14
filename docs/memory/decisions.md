@@ -4,6 +4,7 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-13 | The game is called **Brewdungeon** (exe and module `brewdungeon`). The in-game header keeps `DUNGEON  Level N`; the repo stays `zig-dungeon` unless the user renames it on GitHub. | User choice (over Brewdeep and Brewdepth). | `build.zig`, README |
 | 2026-11-13 | After every change, the reply ends with the proposed commit message (before committing), so the user decides. | User rule. | [workflow.md](workflow.md) |
 | 2026-11-13 | The mystery potion's name is just `???` everywhere. | User choice. | `Potion.label` |
 | 2026-11-13 | Mystery potion: 50% a random chest potion (applied at once), 50% a curse: slow 3 rounds, paralysis 1 action, 2 damage, blind (radius 2) 5 rounds, confused 5 rounds. The hero is red while cursed. | User rules (confusion length chosen by the user). | `drinkMystery`, `Curse`, [features/potions.md](features/potions.md) |

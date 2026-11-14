@@ -1,4 +1,4 @@
-//! Dungeon: pure game logic (no I/O), so it is easy to test.
+//! Brewdungeon: pure game logic (no I/O), so it is easy to test.
 const std = @import("std");
 
 pub const sound = @import("sound.zig");

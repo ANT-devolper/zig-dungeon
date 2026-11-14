@@ -1,6 +1,6 @@
 # Project memory
 
-Durable memory of `zig-dungeon`: how each system works, why it is that way, and what changed. **Read this before reading code.** Open the code only for what these pages do not answer.
+Durable memory of **Brewdungeon** (repo `zig-dungeon`): how each system works, why it is that way, and what changed. **Read this before reading code.** Open the code only for what these pages do not answer.
 
 ## Read order
 

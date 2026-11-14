@@ -3,7 +3,7 @@
 ## Files
 
 ```
-build.zig       module "dungeon" (src/root.zig) + executable "dungeon" (src/main.zig)
+build.zig       module "brewdungeon" (src/root.zig) + executable "brewdungeon" (src/main.zig)
 build.zig.zon   package manifest (package name `.zig` is tied to the fingerprint; leave it)
 src/root.zig    pure game logic + its tests (also pulls in sound.zig's tests)
 src/sound.zig   sound synthesizer (pure, tested) + PlaySoundA playback (Windows only)

@@ -1,7 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
-const dungeon = @import("dungeon");
-const sound = dungeon.sound;
+const brewdungeon = @import("brewdungeon");
+const sound = brewdungeon.sound;
 const term = @import("term.zig");
 
 /// All synthesized sound effects. Global because it is large and because
@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init) !void {
     io.random(&seed_bytes);
     var prng = std.Random.DefaultPrng.init(std.mem.readInt(u64, &seed_bytes, .little));
 
-    var game = dungeon.Game.init(prng.random());
+    var game = brewdungeon.Game.init(prng.random());
 
     var out_buf: [4096]u8 = undefined;
     var out_file: Io.File.Writer = .init(.stdout(), io, &out_buf);
@@ -50,7 +50,7 @@ pub fn main(init: std.process.Init) !void {
         // Enter, space and tab do nothing on the map.
         if (std.ascii.isWhitespace(key)) continue;
         // Ctrl+C quits through the normal path, so the terminal is restored.
-        if (dungeon.parseCommand(&.{if (key == ctrl_c) 'q' else key})) |cmd| {
+        if (brewdungeon.parseCommand(&.{if (key == ctrl_c) 'q' else key})) |cmd| {
             if (cmd == .inventory) {
                 // A pause screen: looking uses no turn. A number uses that item
                 // (which does use a turn); any other key just closes it.
@@ -62,7 +62,7 @@ pub fn main(init: std.process.Init) !void {
                     game.step(.quit);
                     continue;
                 }
-                if (dungeon.parseCommand(&.{choice})) |c| {
+                if (brewdungeon.parseCommand(&.{choice})) |c| {
                     if (c.slot() != null) {
                         game.step(c);
                         try afterTurn(io, out, &game);
@@ -123,7 +123,7 @@ fn playSfx(sfx: sound.Sfx) void {
 
 /// Clears the screen and draws one frame. The hero's field of view is
 /// always on in the game.
-fn drawFrame(out: *Io.Writer, game: *const dungeon.Game, opts: dungeon.RenderOptions) !void {
+fn drawFrame(out: *Io.Writer, game: *const brewdungeon.Game, opts: brewdungeon.RenderOptions) !void {
     var frame_opts = opts;
     frame_opts.fov = true;
     try out.writeAll("\x1b[2J\x1b[H"); // clear the screen (ANSI)
@@ -132,7 +132,7 @@ fn drawFrame(out: *Io.Writer, game: *const dungeon.Game, opts: dungeon.RenderOpt
 }
 
 /// Plays the sounds and animations for what happened during the last turn.
-fn afterTurn(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
+fn afterTurn(io: Io, out: *Io.Writer, game: *const brewdungeon.Game) !void {
     if (game.events.gold) playSfx(.gold);
     if (game.events.chest) playSfx(.chest);
     if (game.events.drink) playSfx(.drink);
@@ -155,8 +155,8 @@ fn afterTurn(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
 }
 
 /// Short animation when the hero hits a monster: a spark blinks over it.
-fn playStrikeEffect(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
-    const frames = [_]struct { opts: dungeon.RenderOptions, ms: i64 }{
+fn playStrikeEffect(io: Io, out: *Io.Writer, game: *const brewdungeon.Game) !void {
+    const frames = [_]struct { opts: brewdungeon.RenderOptions, ms: i64 }{
         .{ .opts = .{ .color = true, .spark = true }, .ms = 90 },
         .{ .opts = .{ .color = true }, .ms = 60 },
         .{ .opts = .{ .color = true, .spark = true }, .ms = 90 },
@@ -168,8 +168,8 @@ fn playStrikeEffect(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
 }
 
 /// Short animation when the hero gets hurt: red flash, then a screen shake.
-fn playHitEffect(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
-    const frames = [_]struct { opts: dungeon.RenderOptions, ms: i64 }{
+fn playHitEffect(io: Io, out: *Io.Writer, game: *const brewdungeon.Game) !void {
+    const frames = [_]struct { opts: brewdungeon.RenderOptions, ms: i64 }{
         .{ .opts = .{ .flash = true, .shake = 2 }, .ms = 70 },
         .{ .opts = .{ .flash = true, .shake = 0 }, .ms = 70 },
         .{ .opts = .{ .color = true, .shake = 2 }, .ms = 60 },

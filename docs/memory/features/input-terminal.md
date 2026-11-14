@@ -27,7 +27,7 @@ Redirected files still work, with or without newlines (`d\nd\ns\nq\n` or `ddsq`)
 
 ```sh
 printf "ddsixq" > in.txt
-./zig-out/bin/dungeon.exe --mute < in.txt > out.txt
+./zig-out/bin/brewdungeon.exe --mute < in.txt > out.txt
 ```
 
 Never pipe the output in Git Bash (see the Gotchas in `CLAUDE.md`).

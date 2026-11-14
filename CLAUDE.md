@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`zig-dungeon` is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) goes down an endless series of randomly generated ASCII mazes (the goal is the deepest level), fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is one key at a time: every key press acts at once, with no Enter. See `README.md` for the player-facing rules.
+**Brewdungeon** (repo `zig-dungeon`) is a small turn-based dungeon crawler for the terminal, written in Zig. The player (`@`) goes down an endless series of randomly generated ASCII mazes (the goal is the deepest level), fights monsters (`M`), collects gold (`$`) and takes the stairs (`>`). Input is one key at a time: every key press acts at once, with no Enter. See `README.md` for the player-facing rules.
 
 ## Toolchain
 
@@ -26,7 +26,7 @@ zig build test --summary all     # run all tests (must pass before committing)
 zig test src/root.zig --test-filter "wall blocks"  # run only tests whose name contains the text
 zig fmt --check src/ build.zig   # formatting check (zig fmt src/ build.zig to fix)
 zig build run                    # build and play
-zig build                        # build zig-out/bin/dungeon(.exe)
+zig build                        # build zig-out/bin/brewdungeon(.exe)
 zig build -Doptimize=ReleaseFast # optimized build
 zig build run -- --mute          # play without sound
 zig build -Dtarget=x86_64-linux  # cross-compile check (sound is a no-op off Windows)
@@ -36,7 +36,7 @@ Smoke test without a terminal (commands from a file, output to a file; see Gotch
 
 ```sh
 printf "d\nd\ns\nq\n" > in.txt
-./zig-out/bin/dungeon.exe --mute < in.txt > out.txt
+./zig-out/bin/brewdungeon.exe --mute < in.txt > out.txt
 ```
 
 ## Project memory (read this first)
@@ -51,7 +51,7 @@ Durable project memory lives in [`docs/memory/`](docs/memory/README.md). It repl
 ## Architecture (map)
 
 ```
-build.zig       module "dungeon" (src/root.zig) + executable "dungeon" (src/main.zig)
+build.zig       module "brewdungeon" (src/root.zig) + executable "brewdungeon" (src/main.zig)
 build.zig.zon   package manifest (package name `.zig` is tied to the fingerprint; leave it)
 src/root.zig    pure game logic + its tests (also pulls in sound.zig's tests)
 src/sound.zig   sound synthesizer (pure, tested) + PlaySoundA playback (Windows only)
@@ -75,11 +75,11 @@ src/term.zig    raw stdin mode (one key at a time, no echo, Ctrl+C as a key) for
 
 ## Gotchas
 
-- **Do not pipe the game's output in Git Bash** (`... | dungeon.exe | grep`, or `out=$(dungeon.exe ...)`). Once a pipe fills up (a field-of-view frame is over 5 KB), Zig 0.17.1's Windows writer panics with `reached unreachable code` / `.PENDING ... wrong File nonblocking flag`. Both `File.Writer.init` and `initStreaming` fail the same way. Redirect to a file instead (`> out.txt`). In a real console (Windows Terminal, PowerShell, VS Code) this does not happen.
+- **Do not pipe the game's output in Git Bash** (`... | brewdungeon.exe | grep`, or `out=$(brewdungeon.exe ...)`). Once a pipe fills up (a field-of-view frame is over 5 KB), Zig 0.17.1's Windows writer panics with `reached unreachable code` / `.PENDING ... wrong File nonblocking flag`. Both `File.Writer.init` and `initStreaming` fail the same way. Redirect to a file instead (`> out.txt`). In a real console (Windows Terminal, PowerShell, VS Code) this does not happen.
 
 - 0.17 renamed or removed some builtins and std helpers. `zig fmt` rewrites `@intFromEnum` to `@backingInt`, and `std.meta.fields` is a compile error (use `@typeInfo` or `std.enums.values(E)`). Run `zig fmt` after writing code.
 - The array repetition operator `**` no longer compiles in 0.17. Use `@splat`, e.g. `var seen: [H][W]bool = @splat(@splat(false));`.
-- On Windows, `zig build` fails at the "install" step if `dungeon.exe` is running. Close the game and build again.
+- On Windows, `zig build` fails at the "install" step if `brewdungeon.exe` is running. Close the game and build again.
 - Lines from a redirected file on Windows may end with `\r\n`. `parseCommand` trims `\r` and the map loop skips whitespace keys, so keep that in mind for any new input parsing.
 - Line endings: `.gitattributes` forces LF (`* text=auto eol=lf`) because local git has `core.autocrlf=true`, which used to rewrite files with CRLF on checkout, and `zig fmt --check` rejects CRLF. Keep the file. A file created with CRLF by a tool is converted on `git add`; `zig fmt` fixes it on disk.
 - The default branch is `main` and the remote is `origin` (GitHub). Push authentication is set up per machine in local git config. Do not change the global git config.
