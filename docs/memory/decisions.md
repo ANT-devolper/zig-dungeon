@@ -4,6 +4,11 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-13 | After every change, the reply ends with the proposed commit message (before committing), so the user decides. | User rule. | [workflow.md](workflow.md) |
+| 2026-11-13 | The mystery potion's name is just `???` everywhere. | User choice. | `Potion.label` |
+| 2026-11-13 | Mystery potion: 50% a random chest potion (applied at once), 50% a curse: slow 3 rounds, paralysis 1 action, 2 damage, blind (radius 2) 5 rounds, confused 5 rounds. The hero is red while cursed. | User rules (confusion length chosen by the user). | `drinkMystery`, `Curse`, [features/potions.md](features/potions.md) |
+| 2026-11-13 | The burn curse never kills: the hero keeps 1 HP. | User choice. | `applyCurse` |
+| 2026-11-13 | Mystery: 10% of chest potions, taken from health (50% -> 40%); shop price 10. | User choice. | `mystery_chance`, `Potion.price` |
 | 2026-11-13 | The map is 31x13 with a single border, so the maze uses every line (reverses the double-border choice). | User request: a whole line was wasted. | `W`, `H`, [features/levels.md](features/levels.md) |
 | 2026-11-13 | Potion colors: vision purple, health green, strength brown, time stop yellow, speed blue. Used for the shop's `!` and inventory names. | User request. | `Potion.color` |
 | 2026-11-13 | Shop event on the stairs of every even level: 80% the first call, 50% after. Right after a shop the next chance is skipped (not called). | User rules. | `nextLevel`, [features/shop.md](features/shop.md) |

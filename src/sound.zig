@@ -36,6 +36,7 @@ pub const Sfx = enum {
     vision,
     stairs,
     buy,
+    curse,
     lost,
 
     pub fn notes(s: Sfx) []const Note {
@@ -59,6 +60,10 @@ pub const Sfx = enum {
                 .{ .freq_start = 1760, .ms = 50, .volume = 0.3 },
                 .{ .freq_start = 1320, .ms = 50, .volume = 0.3 },
                 .{ .freq_start = 1760, .ms = 120, .volume = 0.3 },
+            },
+            .curse => &.{
+                .{ .freq_start = 330, .freq_end = 220, .ms = 120, .volume = 0.4 },
+                .{ .freq_start = 233, .freq_end = 110, .ms = 260, .volume = 0.4 },
             },
             .chest => &.{
                 .{ .freq_start = 784, .ms = 80, .volume = 0.3 },

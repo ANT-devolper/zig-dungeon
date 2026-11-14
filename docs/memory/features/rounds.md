@@ -25,3 +25,7 @@ Speed is always drunk at the start of a fast round, so that round counts: 10 rou
 With speed and time stop together, each frozen round lasts 2 actions, so `TIME STOP` drops once every 2 actions. Strength and vision also last 2 actions per round with speed.
 
 Tests: `"speed gives 2 actions per round for 10 rounds (20 actions)"`, `"time stop drunk in the first half of a fast round still gives 3 free rounds"`, `"strength combines with speed and time stop: it counts rounds, not actions"`, `"vision shows the whole map for the drink round plus 3, then fov comes back"`.
+
+## Curses (mystery potion)
+
+`slow`, `blind` and `confused` tick in `endRound` through `tickCurse`, with fresh flags like vision (drink round + N). While slow (and not fresh), `endRound` calls `monstersTurn` a second time. `paralyzed` is not a counter: the next action in `step` spends it. See [potions.md](potions.md).

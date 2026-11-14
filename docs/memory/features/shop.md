@@ -29,19 +29,22 @@ The shop **counts as a level**: `level` goes up by one and monster HP (see [mons
 - Bumping the shopkeeper blocks the move: "The shopkeeper smiles. Walk over an item to buy it."
 - Each move is a normal turn (effect counters tick).
 
-## Prices (`Potion.price`, rarer costs more)
+## Prices (`Potion.price`, user-approved table)
 
 | Potion | Chance in a potion roll | Price |
 |---|---|---|
-| small health | 25% | 10 |
-| medium health | 17.5% | 15 |
+| small health | 20% | 10 |
+| mystery | 10% | 10 (a cheap gamble, user choice) |
+| medium health | 14% | 15 |
 | speed | 15% | 20 |
 | time stop | 10% | 25 |
 | vision | 10% | 25 |
-| large health | 7.5% | 30 |
+| large health | 6% | 30 |
 | small strength | 7.5% | 30 |
 | medium strength | 5.25% | 45 |
 | large strength | 2.25% | 70 |
+
+The prices were set by rarity before the mystery potion took 10% from health. Since then medium health (14%) is rarer than speed (15%) but cheaper; the test checks the table itself (`"prices follow the user's table"`).
 
 ## Rendering
 
@@ -49,4 +52,4 @@ Header `Level N (SHOP)`; items `!` in their potion's color (`Potion.color`, see 
 
 ## Tests
 
-`"the shop event shows up 80% the first time and 50% after"`, `"after a shop shows up, the next chance is skipped"`, `"the shop event only runs on the stairs of even levels"`, `"the shop counts as a level and its stairs lead to the next one"`, `"a shop has a shopkeeper, two items and no monsters"`, `"walking over an item buys it when the gold is enough"`, `"an item stays when the gold is not enough"`, `"the shopkeeper blocks the way"`, `"prices follow rarity"`.
+`"the shop event shows up 80% the first time and 50% after"`, `"after a shop shows up, the next chance is skipped"`, `"the shop event only runs on the stairs of even levels"`, `"the shop counts as a level and its stairs lead to the next one"`, `"a shop has a shopkeeper, two items and no monsters"`, `"walking over an item buys it when the gold is enough"`, `"an item stays when the gold is not enough"`, `"the shopkeeper blocks the way"`, `"prices follow the user's table"`.

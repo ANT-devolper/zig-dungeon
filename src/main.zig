@@ -142,6 +142,7 @@ fn afterTurn(io: Io, out: *Io.Writer, game: *const dungeon.Game) !void {
     if (game.events.vision) playSfx(.vision);
     if (game.events.stairs) playSfx(.stairs);
     if (game.events.buy) playSfx(.buy);
+    if (game.events.curse) playSfx(.curse);
     // Same order as the turn: the hero's strike, then the monsters' bites.
     if (game.hit_pos != null) {
         playSfx(if (game.hit_killed) .kill else .strike);

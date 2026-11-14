@@ -5,7 +5,7 @@ Code: `Game.render`, `RenderOptions`, `writeHeader`, `renderInventory`, the `ans
 ## Frame
 
 - `RenderOptions{}` (the default) produces plain text with **no ANSI codes**; tests use it. Options: `color`, `flash` (red background), `shake` (row indent 0/1/2), `spark`, `fov` (see [fov.md](fov.md)).
-- Layout: header line (`writeHeader`: `Level N` with no maximum, plus ` (SHOP)` in a shop, HP, gold, then `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N` while active), blank line, the map, the message (with "(+N gold)", "(<potion>)", "(+N HP)", "(-N HP)" appended), and the help line `[w/a/s/d] move  [.] wait  [i] inventory  [q] quit` while playing. There is no `> ` prompt and no mention of Enter.
+- Layout: header line (`writeHeader`: `Level N` with no maximum, plus ` (SHOP)` in a shop, HP, gold, then `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N`, `SLOW N`, `BLIND N`, `CONFUSED N`, `PARALYZED` while active), blank line, the map, the message (with "(+N gold)", "(<potion>)", "(+N HP)", "(-N HP)" appended), and the help line `[w/a/s/d] move  [.] wait  [i] inventory  [q] quit` while playing. There is no `> ` prompt and no mention of Enter.
 - `drawFrame` in `main.zig` clears with `\x1b[2J\x1b[H` and always sets `fov`.
 
 ## Colors (`color = true`)
@@ -27,3 +27,4 @@ Code: `Game.render`, `RenderOptions`, `writeHeader`, `renderInventory`, the `ans
 - `game.damage_taken > 0`: `playHitEffect` runs the red flash then the screen shake: 70/70/60/60 ms frames.
 - Sounds are triggered in the same function (see [sound.md](sound.md)).
 - Shop: items `!` in their potion's color (`Potion.color`), the shopkeeper `@` in orange (`ansi_shopkeeper`), a `For sale:` line (`writeForSale`) before the message, no field of view. See [shop.md](shop.md).
+- The hero's `@` is red while hurt or cursed (`isCursed()`), which wins over the speed background.

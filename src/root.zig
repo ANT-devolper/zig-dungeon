@@ -36,6 +36,19 @@ pub const strength_turns = 3;
 const vision_chance = 10;
 /// Rounds the hero sees the whole map after the round it was drunk in.
 pub const vision_turns = 3;
+/// Chance (in %) that a chest's potion is a mystery potion.
+const mystery_chance = 10;
+/// Chance (in %) that a mystery potion is good (a random chest potion);
+/// otherwise it is a curse.
+const mystery_good_chance = 50;
+/// Curse durations, in rounds after the round the mystery was drunk in.
+pub const slow_turns = 3;
+pub const blind_turns = 5;
+pub const confused_turns = 5;
+/// Damage of the burning curse (it never kills: the hero keeps 1 HP).
+const curse_damage = 2;
+/// Field of view radius while blind.
+const blind_radius = 2;
 /// Chance (in %) that the shop shows up the first time its event is called
 /// (on the stairs of every even level, see `Game.nextLevel`).
 const shop_first_chance = 80;
@@ -43,8 +56,8 @@ const shop_first_chance = 80;
 const shop_chance = 50;
 
 /// Potion kinds the hero can carry: three sizes of health potion, three
-/// sizes of strength potion, plus the time stop, speed and vision potions,
-/// which are single kinds with no sizes.
+/// sizes of strength potion, plus the time stop, speed, vision and mystery
+/// potions, which are single kinds with no sizes.
 pub const Potion = enum {
     small,
     medium,
@@ -55,8 +68,10 @@ pub const Potion = enum {
     strength_medium,
     strength_large,
     vision,
+    /// 50% a random chest potion, 50% a curse (see `Curse`).
+    mystery,
 
-    pub const count = 9;
+    pub const count = 10;
 
     /// HP restored (only health potions heal).
     pub fn heal(p: Potion) i32 {
@@ -108,6 +123,7 @@ pub const Potion = enum {
             .strength_medium => "medium strength potion",
             .strength_large => "large strength potion",
             .vision => "vision potion",
+            .mystery => "???", // the name is a mystery too (a user choice)
         };
     }
 
@@ -121,6 +137,7 @@ pub const Potion = enum {
             .time_stop => ansi_yellow,
             .vision => ansi_purple,
             .speed => ansi_blue,
+            .mystery => ansi_white,
         };
     }
 
@@ -136,6 +153,7 @@ pub const Potion = enum {
             .strength_small => 30,
             .strength_medium => 45,
             .strength_large => 70,
+            .mystery => 10, // a gamble, cheap (a user choice)
         };
     }
 
@@ -143,6 +161,20 @@ pub const Potion = enum {
         return @backingInt(p);
     }
 };
+/// What a bad mystery potion does, each 1 time in 5 (user rules).
+pub const Curse = enum {
+    /// The monsters act twice per round for `slow_turns` rounds.
+    slow,
+    /// The hero's next action is lost.
+    paralysis,
+    /// `curse_damage` damage, but never below 1 HP.
+    burn,
+    /// The field of view shrinks to `blind_radius` for `blind_turns` rounds.
+    blind,
+    /// Move keys are inverted for `confused_turns` rounds.
+    confused,
+};
+
 const chase_radius = 6;
 /// Chance (in %) that a monster that is not chasing takes a random step.
 const wander_chance = 30;
@@ -208,6 +240,7 @@ const ansi_spark = "\x1b[1;37;45m";
 const ansi_shopkeeper = "\x1b[1;38;5;208m"; // orange: the shopkeeper's '@'
 const ansi_purple = "\x1b[1;38;5;129m"; // vision potions
 const ansi_brown = "\x1b[1;38;5;130m"; // strength potions
+const ansi_white = "\x1b[1;37m"; // mystery potions
 
 pub const Command = enum {
     up,
@@ -237,6 +270,17 @@ pub const Command = enum {
             .left => .{ .x = -1, .y = 0 },
             .right => .{ .x = 1, .y = 0 },
             else => .{ .x = 0, .y = 0 },
+        };
+    }
+
+    /// The opposite move (confusion curse); other commands stay the same.
+    fn reversed(c: Command) Command {
+        return switch (c) {
+            .up => .down,
+            .down => .up,
+            .left => .right,
+            .right => .left,
+            else => c,
         };
     }
 
@@ -309,6 +353,7 @@ pub const Events = struct {
     vision: bool = false,
     stairs: bool = false,
     buy: bool = false,
+    curse: bool = false,
     lost: bool = false,
 };
 
@@ -405,6 +450,19 @@ pub const Game = struct {
     vision: u8 = 0,
     /// Vision was drunk during the current round, which does not count.
     vision_fresh: bool = false,
+    /// Curses from a bad mystery potion (see `Curse`). Like vision, each
+    /// counter has a fresh flag: the round it was drunk in is free.
+    slow: u8 = 0,
+    slow_fresh: bool = false,
+    blind: u8 = 0,
+    blind_fresh: bool = false,
+    confused: u8 = 0,
+    confused_fresh: bool = false,
+    /// The hero's next action is lost (paralysis curse).
+    paralyzed: bool = false,
+    /// What the mystery potion drunk during the last turn turned out to be.
+    mystery_potion: ?Potion = null,
+    mystery_curse: ?Curse = null,
     /// A fast hero already used the first of the 2 actions of this round.
     half_round: bool = false,
     /// The current level is a shop (see `loadShop`).
@@ -518,6 +576,8 @@ pub const Game = struct {
             Potion.strengthFromRoll(g.rng.uintLessThan(u8, 100))
         else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance)
             .vision
+        else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance + mystery_chance)
+            .mystery
         else
             Potion.fromRoll(g.rng.uintLessThan(u8, 100));
     }
@@ -786,27 +846,37 @@ pub const Game = struct {
         g.healed = 0;
         g.shop_bought = null;
         g.shop_refused = null;
+        g.mystery_potion = null;
+        g.mystery_curse = null;
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
 
-        switch (cmd) {
+        // Paralysis (a curse) turns the next action into a lost turn;
+        // quitting still works.
+        const paralyzed = g.paralyzed and cmd != .quit;
+        if (paralyzed) g.paralyzed = false;
+        var action = if (paralyzed) Command.wait else cmd;
+        // Confusion (a curse) inverts the move keys.
+        if (g.confused > 0) action = action.reversed();
+
+        switch (action) {
             .quit => {
                 g.state = .quit;
                 g.message = "You fled the dungeon.";
                 return;
             },
-            .wait => g.message = "You wait...",
+            .wait => g.message = if (paralyzed) "You are paralyzed! You lose this turn." else "You wait...",
             .inventory => unreachable, // handled above
             .use_1, .use_2, .use_3, .use_4, .use_5, .use_6, .use_7, .use_8, .use_9 => {
                 // Using nothing, or failing to drink, does not use a turn:
                 // return before the monsters act.
-                const item = g.inventory.itemAt(cmd.slot().?) orelse {
+                const item = g.inventory.itemAt(action.slot().?) orelse {
                     g.message = "You have no item with that number.";
                     return;
                 };
                 if (!g.drink(item)) return;
             },
             .up, .down, .left, .right => {
-                const target = g.hero.add(cmd.delta());
+                const target = g.hero.add(action.delta());
                 if (g.monsterAt(target)) |i| {
                     g.monsters[i].hp -= g.attackDamage();
                     g.hit_pos = target;
@@ -898,7 +968,24 @@ pub const Game = struct {
         } else if (g.vision > 0) {
             g.vision -= 1;
         }
-        if (!frozen) g.monstersTurn();
+        // Slowness: the monsters get a second turn in every slow round.
+        const slow = g.slow > 0 and !g.slow_fresh;
+        tickCurse(&g.slow, &g.slow_fresh);
+        tickCurse(&g.blind, &g.blind_fresh);
+        tickCurse(&g.confused, &g.confused_fresh);
+        if (!frozen) {
+            g.monstersTurn();
+            if (slow and g.state == .playing) g.monstersTurn();
+        }
+    }
+
+    /// One round of a curse counter (the drink round is free).
+    fn tickCurse(counter: *u8, fresh: *bool) void {
+        if (fresh.*) {
+            fresh.* = false;
+        } else if (counter.* > 0) {
+            counter.* -= 1;
+        }
     }
 
     /// Damage the hero's attack deals, including any strength bonus.
@@ -929,59 +1016,114 @@ pub const Game = struct {
     /// Drinks a potion the hero carries. Returns false (and uses no turn)
     /// when it is a health potion and the hero is already at full health.
     fn drink(g: *Game, kind: Potion) bool {
-        if (kind == .time_stop) {
-            g.inventory.remove(kind);
-            g.time_stop = time_stop_turns; // drinking again resets, never adds
-            g.time_stop_fresh = true;
-            g.events.time_stop = true;
-            g.message = "Time stops! The monsters are frozen.";
-            return true;
-        }
-        if (kind == .speed) {
-            g.inventory.remove(kind);
-            g.speed = speed_turns; // drinking again resets, never adds
-            g.events.speed = true;
-            g.message = "You feel fast!";
-            return true;
-        }
-        if (kind == .vision) {
-            g.inventory.remove(kind);
-            g.vision = vision_turns; // drinking again resets, never adds
-            g.vision_fresh = true;
-            g.events.vision = true;
-            g.message = "Your eyes glow! You see the whole map.";
-            return true;
-        }
-        if (kind.strength() > 0) {
-            g.inventory.remove(kind);
-            g.strength_bonus += kind.strength(); // bonuses add up
-            g.strength = strength_turns; // the counter resets, never adds
-            g.strength_fresh = true;
-            g.events.strength = true;
-            g.message = switch (kind) {
-                .strength_small => "You feel stronger! (+1 damage)",
-                .strength_medium => "You feel stronger! (+2 damage)",
-                else => "You feel stronger! (+3 damage)",
-            };
-            return true;
-        }
-        if (g.hp >= max_hp) {
+        if (kind.heal() > 0 and g.hp >= max_hp) {
             g.message = "You are already at full health.";
             return false;
         }
         g.inventory.remove(kind);
-        const before = g.hp;
-        g.hp = @min(max_hp, g.hp + kind.heal());
-        g.healed = g.hp - before;
-        g.events.drink = true;
-        // render() appends the HP restored: "(+N HP)".
-        g.message = switch (kind) {
-            .small => "You drink a small health potion.",
-            .medium => "You drink a medium health potion.",
-            .large => "You drink a large health potion.",
-            else => unreachable, // handled above
-        };
+        if (kind == .mystery) g.drinkMystery() else g.applyPotion(kind);
         return true;
+    }
+
+    /// A mystery potion: a random chest potion or a random curse, 50/50.
+    /// render() appends what it was: "(it was a <label>)" or "(it was a curse)".
+    fn drinkMystery(g: *Game) void {
+        if (g.rng.uintLessThan(u8, 100) < mystery_good_chance) {
+            var p = g.randomPotion();
+            while (p == .mystery) p = g.randomPotion();
+            g.mystery_potion = p;
+            g.applyPotion(p);
+        } else {
+            const curses = std.enums.values(Curse);
+            const c = curses[g.rng.uintLessThan(usize, curses.len)];
+            g.mystery_curse = c;
+            g.events.curse = true;
+            g.applyCurse(c);
+        }
+    }
+
+    /// The effect of a potion (already taken out of the inventory).
+    fn applyPotion(g: *Game, kind: Potion) void {
+        switch (kind) {
+            .time_stop => {
+                g.time_stop = time_stop_turns; // drinking again resets, never adds
+                g.time_stop_fresh = true;
+                g.events.time_stop = true;
+                g.message = "Time stops! The monsters are frozen.";
+            },
+            .speed => {
+                g.speed = speed_turns; // drinking again resets, never adds
+                g.events.speed = true;
+                g.message = "You feel fast!";
+            },
+            .vision => {
+                g.vision = vision_turns; // drinking again resets, never adds
+                g.vision_fresh = true;
+                g.events.vision = true;
+                g.message = "Your eyes glow! You see the whole map.";
+            },
+            .strength_small, .strength_medium, .strength_large => {
+                g.strength_bonus += kind.strength(); // bonuses add up
+                g.strength = strength_turns; // the counter resets, never adds
+                g.strength_fresh = true;
+                g.events.strength = true;
+                g.message = switch (kind) {
+                    .strength_small => "You feel stronger! (+1 damage)",
+                    .strength_medium => "You feel stronger! (+2 damage)",
+                    else => "You feel stronger! (+3 damage)",
+                };
+            },
+            .small, .medium, .large => {
+                const before = g.hp;
+                g.hp = @min(max_hp, g.hp + kind.heal());
+                g.healed = g.hp - before;
+                g.events.drink = true;
+                // render() appends the HP restored: "(+N HP)".
+                g.message = switch (kind) {
+                    .small => "You drink a small health potion.",
+                    .medium => "You drink a medium health potion.",
+                    else => "You drink a large health potion.",
+                };
+            },
+            .mystery => unreachable, // drinkMystery never applies a mystery
+        }
+    }
+
+    /// The effect of a bad mystery potion.
+    fn applyCurse(g: *Game, c: Curse) void {
+        switch (c) {
+            .slow => {
+                g.slow = slow_turns; // resets, never adds
+                g.slow_fresh = true;
+                g.message = "You feel slow... The monsters move twice as fast.";
+            },
+            .paralysis => {
+                g.paralyzed = true;
+                g.message = "You can't move! You lose your next action.";
+            },
+            .burn => {
+                // Never kills: the hero keeps at least 1 HP.
+                const loss = @min(curse_damage, g.hp - 1);
+                g.hp -= loss;
+                g.damage_taken += loss;
+                g.message = "It burns!";
+            },
+            .blind => {
+                g.blind = blind_turns;
+                g.blind_fresh = true;
+                g.message = "Your sight grows dim.";
+            },
+            .confused => {
+                g.confused = confused_turns;
+                g.confused_fresh = true;
+                g.message = "You feel dizzy. Your moves are reversed!";
+            },
+        }
+    }
+
+    /// True while a curse from a mystery potion is active (the hero is red).
+    pub fn isCursed(g: *const Game) bool {
+        return g.slow > 0 or g.paralyzed or g.blind > 0 or g.confused > 0;
     }
 
     fn monstersTurn(g: *Game) void {
@@ -1050,7 +1192,7 @@ pub const Game = struct {
     /// and with no wall in between. Walls that block the view are visible.
     pub fn visibility(g: *const Game) [H][W]bool {
         var vis: [H][W]bool = @splat(@splat(false));
-        const r = view_radius;
+        const r: i32 = if (g.blind > 0) blind_radius else view_radius;
         var dy: i32 = -r;
         while (dy <= r) : (dy += 1) {
             var dx: i32 = -r;
@@ -1121,7 +1263,8 @@ pub const Game = struct {
                     break :blk if (g.hit_killed) 'X' else '*';
                 } else if (p.eql(g.hero)) blk: {
                     // The hero always stands out: cyan, or red when just hurt.
-                    color = if (hurt) ansi_red else if (g.isFast()) ansi_fast else ansi_cyan;
+                    // Red while cursed by a mystery potion, like when hurt.
+                    color = if (hurt or g.isCursed()) ansi_red else if (g.isFast()) ansi_fast else ansi_cyan;
                     break :blk '@';
                 } else if (g.isShopkeeper(p)) blk: {
                     color = ansi_shopkeeper;
@@ -1167,6 +1310,16 @@ pub const Game = struct {
         if (g.shop_bought) |p| {
             if (opts.color) try w.writeAll(ansi_green);
             try w.print(" ({s}, -{d} gold)", .{ p.label(), p.price() });
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
+        if (g.mystery_potion) |p| {
+            if (opts.color) try w.writeAll(ansi_green);
+            try w.print(" (it was a {s})", .{p.label()});
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
+        if (g.mystery_curse != null) {
+            if (opts.color) try w.writeAll(ansi_red);
+            try w.writeAll(" (it was a curse)");
             if (opts.color) try w.writeAll(ansi_reset);
         }
         if (g.shop_refused) |p| {
@@ -1223,6 +1376,10 @@ pub const Game = struct {
         if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
         if (g.strength > 0) try w.print("   STRENGTH +{d} ({d})", .{ g.strength_bonus, g.strength });
         if (g.vision > 0) try w.print("   VISION {d}", .{g.vision});
+        if (g.slow > 0) try w.print("   SLOW {d}", .{g.slow});
+        if (g.blind > 0) try w.print("   BLIND {d}", .{g.blind});
+        if (g.confused > 0) try w.print("   CONFUSED {d}", .{g.confused});
+        if (g.paralyzed) try w.writeAll("   PARALYZED");
         try w.writeAll("\n\n");
     }
 
@@ -1253,6 +1410,7 @@ pub const Game = struct {
                 .strength_medium => "Medium strength potion (+2 dmg, 3 turns)",
                 .strength_large => "Large strength potion  (+3 dmg, 3 turns)",
                 .vision => "Vision potion        (3 turns)",
+                .mystery => "???",
             };
             if (color) {
                 try w.print("  {d}) {s}{s}{s} ..... x", .{ number, p.color(), label, ansi_reset });
@@ -1613,7 +1771,7 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.fromRoll(@intCast(r)).index()] += 1;
     // Time stop has no sizes: it never comes out of the size roll.
-    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0, 0, 0, 0, 0 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0, 0, 0, 0, 0, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.small.heal());
     try testing.expectEqual(@as(i32, 3), Potion.medium.heal());
     try testing.expectEqual(@as(i32, 5), Potion.large.heal());
@@ -1623,7 +1781,7 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
 test "strength potions add 1, 2 and 3 damage and use the same size split" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.strengthFromRoll(@intCast(r)).index()] += 1;
-    try testing.expectEqual([Potion.count]usize{ 0, 0, 0, 0, 0, 50, 35, 15, 0 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 0, 0, 0, 0, 0, 50, 35, 15, 0, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.strength_small.strength());
     try testing.expectEqual(@as(i32, 2), Potion.strength_medium.strength());
     try testing.expectEqual(@as(i32, 3), Potion.strength_large.strength());
@@ -1705,12 +1863,13 @@ test "strength combines with speed and time stop: it counts rounds, not actions"
     try testing.expectEqual(@as(i32, hero_damage), g.attackDamage());
 }
 
-test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision and 50% health" {
+test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision, 10% mystery and 40% health" {
     var potions: usize = 0;
     var time_stops: usize = 0;
     var speeds: usize = 0;
     var strengths: usize = 0;
     var visions: usize = 0;
+    var mysteries: usize = 0;
     var healths: usize = 0;
     var seed: u64 = 0;
     while (potions < 2000) : (seed += 1) {
@@ -1724,6 +1883,7 @@ test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision an
             .speed => speeds += 1,
             .strength_small, .strength_medium, .strength_large => strengths += 1,
             .vision => visions += 1,
+            .mystery => mysteries += 1,
             .small, .medium, .large => healths += 1,
         }
     }
@@ -1731,7 +1891,8 @@ test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision an
     try testing.expect(speeds >= 200 and speeds <= 400); // 10%..20%
     try testing.expect(strengths >= 200 and strengths <= 400); // 10%..20%
     try testing.expect(visions >= 100 and visions <= 300); // 5%..15%
-    try testing.expect(healths >= 900 and healths <= 1100); // 45%..55%
+    try testing.expect(mysteries >= 100 and mysteries <= 300); // 5%..15%
+    try testing.expect(healths >= 700 and healths <= 900); // 35%..45%
 }
 
 test "vision works at full health and shows its counter" {
@@ -2892,18 +3053,12 @@ test "the shopkeeper blocks the way" {
     try testing.expectEqualStrings("The shopkeeper smiles. Walk over an item to buy it.", g.message);
 }
 
-test "prices follow rarity" {
-    // Chance of each kind in a chest or shop potion roll, in 1/10000.
-    const chance = [Potion.count]u32{ 2500, 1750, 750, 1000, 1500, 750, 525, 225, 1000 };
-    const prices = [Potion.count]u32{ 10, 15, 30, 25, 20, 30, 45, 70, 25 };
-    for (std.enums.values(Potion), 0..) |a, i| {
-        try testing.expectEqual(prices[i], a.price());
-        for (std.enums.values(Potion), 0..) |b, j| {
-            // Rarer is more expensive; just as rare costs the same.
-            if (chance[i] < chance[j]) try testing.expect(a.price() > b.price());
-            if (chance[i] == chance[j]) try testing.expectEqual(a.price(), b.price());
-        }
-    }
+test "prices follow the user's table" {
+    // Health S, M, L, time stop, speed, strength S, M, L, vision, mystery.
+    const prices = [Potion.count]u32{ 10, 15, 30, 25, 20, 30, 45, 70, 25, 10 };
+    for (std.enums.values(Potion), 0..) |p, i| try testing.expectEqual(prices[i], p.price());
+    // The rarest potion is the most expensive.
+    for (std.enums.values(Potion)) |p| try testing.expect(p.price() <= Potion.strength_large.price());
 }
 
 test "each potion kind has its color in the shop and the inventory" {
@@ -2926,4 +3081,146 @@ test "each potion kind has its color in the shop and the inventory" {
     var w: std.Io.Writer = .fixed(&buf);
     try g.renderInventory(&w, true);
     try testing.expect(std.mem.indexOf(u8, w.buffered(), ansi_yellow ++ "Time stop potion") != null);
+}
+
+const corridor_layout: Layout = &.{
+    "##############################",
+    "#@..............M............#",
+    "##############################",
+};
+
+test "a mystery potion is good half the time and a curse the other half" {
+    var good: usize = 0;
+    var curses: [std.enums.values(Curse).len]usize = @splat(0);
+    var seed: u64 = 0;
+    while (seed < 2000) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, pocket_layout);
+        g.hp = 5;
+        g.inventory.add(.mystery);
+        g.inventory.add(.vision);
+        g.step(.use_1);
+        try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.mystery));
+        try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.vision)); // untouched
+        if (g.mystery_potion) |p| {
+            try testing.expect(p != .mystery);
+            try testing.expect(g.mystery_curse == null);
+            good += 1;
+        } else {
+            curses[@backingInt(g.mystery_curse.?)] += 1;
+            try testing.expect(g.events.curse);
+        }
+    }
+    try testing.expect(good >= 900 and good <= 1100);
+    for (curses) |n| try testing.expect(n >= 140 and n <= 260); // about 200 each
+}
+
+test "a mystery potion works at full health and says what it was" {
+    var prng = std.Random.DefaultPrng.init(3);
+    var g = testGame(&prng, pocket_layout);
+    g.inventory.add(.mystery);
+    g.step(.use_1);
+    try testing.expectEqual(@as(usize, 0), g.inventory.items().len);
+    var buf: [8192]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "(it was a ") != null);
+    try testing.expectEqualStrings("???", Potion.mystery.label());
+    try testing.expectEqual(@as(u32, 10), Potion.mystery.price());
+}
+
+test "slowness makes the monsters act twice per round for 3 rounds" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, corridor_layout);
+    g.applyCurse(.slow);
+    try testing.expect(g.isCursed());
+    // Within chase range, so it walks toward the hero every turn.
+    g.monsters[0].pos.x = 7;
+    g.step(.wait); // the drink round: one monster turn
+    try testing.expectEqual(@as(i32, 6), g.monsters[0].pos.x);
+    try testing.expectEqual(@as(u8, 3), g.slow);
+    g.monsters[0].pos.x = 7;
+    g.step(.wait); // slow round: two monster turns
+    try testing.expectEqual(@as(i32, 5), g.monsters[0].pos.x);
+    try testing.expectEqual(@as(u8, 2), g.slow);
+    g.step(.wait);
+    g.step(.wait);
+    try testing.expectEqual(@as(u8, 0), g.slow);
+    try testing.expect(!g.isCursed());
+    g.monsters[0].pos.x = 7;
+    g.step(.wait); // back to one turn per round
+    try testing.expectEqual(@as(i32, 6), g.monsters[0].pos.x);
+}
+
+test "paralysis turns the next action into a lost turn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout);
+    g.applyCurse(.paralysis);
+    var buf: [8192]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "PARALYZED") != null);
+    const start = g.hero;
+    g.step(.right);
+    try testing.expect(g.hero.eql(start));
+    try testing.expectEqualStrings("You are paralyzed! You lose this turn.", g.message);
+    try testing.expect(!g.paralyzed);
+    g.step(.right);
+    try testing.expectEqual(start.x + 1, g.hero.x);
+}
+
+test "the burning curse does 2 damage but never kills" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout);
+    g.applyCurse(.burn);
+    try testing.expectEqual(@as(i32, max_hp - 2), g.hp);
+    try testing.expectEqual(@as(i32, 2), g.damage_taken);
+    g.hp = 2;
+    g.damage_taken = 0;
+    g.applyCurse(.burn);
+    try testing.expectEqual(@as(i32, 1), g.hp);
+    try testing.expectEqual(@as(i32, 1), g.damage_taken);
+    g.damage_taken = 0;
+    g.applyCurse(.burn);
+    try testing.expectEqual(@as(i32, 1), g.hp);
+    try testing.expectEqual(@as(i32, 0), g.damage_taken);
+    try testing.expectEqual(State.playing, g.state);
+}
+
+test "blindness shrinks the field of view for 5 rounds" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fov_layout);
+    try testing.expect(isVisible(g.visibility(), 4, 2)); // 3 up
+    g.applyCurse(.blind);
+    try testing.expect(!isVisible(g.visibility(), 4, 2));
+    try testing.expect(isVisible(g.visibility(), 4, 3)); // 2 up
+    for (0..5) |_| g.step(.wait);
+    try testing.expectEqual(@as(u8, 1), g.blind);
+    g.step(.wait);
+    try testing.expectEqual(@as(u8, 0), g.blind);
+    try testing.expect(isVisible(g.visibility(), 4, 2));
+}
+
+test "confusion inverts the move keys for 5 rounds" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fov_layout);
+    g.applyCurse(.confused);
+    const start = g.hero;
+    g.step(.up); // goes down
+    try testing.expectEqual(start.y + 1, g.hero.y);
+    g.step(.left); // goes right
+    try testing.expectEqual(start.x + 1, g.hero.x);
+    for (0..4) |_| g.step(.wait);
+    try testing.expectEqual(@as(u8, 0), g.confused);
+    const now = g.hero;
+    g.step(.up);
+    try testing.expectEqual(now.y - 1, g.hero.y);
+}
+
+test "the hero is red while cursed" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout);
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .color = true }), ansi_cyan ++ "@") != null);
+    g.applyCurse(.confused);
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_red ++ "@") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "CONFUSED 5") != null);
 }
