@@ -28,4 +28,6 @@ Tests: `"speed gives 2 actions per round for 10 rounds (20 actions)"`, `"time st
 
 ## Curses (mystery potion)
 
+**Invisibility** (`invisible`, `invisible_fresh`) ticks the same way through `tickCurse`. `endRound` reads `hidden = invisible > 0` **before** the tick (like `frozen` for time stop), so the hero is hidden in the drink round and the 5 rounds after it; `hidden` goes to both `monstersTurn` calls (normal and slow). Attacking a monster in `step` zeroes the counter before `endRound`, so the monsters act normally in that round.
+
 `slow`, `blind` and `confused` tick in `endRound` through `tickCurse`, with fresh flags like vision (drink round + N). While slow (and not fresh), `endRound` calls `monstersTurn` a second time. `paralyzed` is not a counter: the next action in `step` spends it. See [potions.md](potions.md).

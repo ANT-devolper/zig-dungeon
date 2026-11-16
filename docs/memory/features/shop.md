@@ -33,18 +33,19 @@ The shop **counts as a level**: `level` goes up by one and monster HP (see [mons
 
 | Potion | Chance in a potion roll | Price |
 |---|---|---|
-| small health | 20% | 10 |
+| small health | 15% | 10 |
 | mystery | 10% | 10 (a cheap gamble, user choice) |
-| medium health | 14% | 15 |
+| medium health | 10.5% | 15 |
 | speed | 15% | 20 |
 | time stop | 10% | 25 |
 | vision | 10% | 25 |
-| large health | 6% | 30 |
+| invisibility | 10% | 25 (user choice) |
+| large health | 4.5% | 30 |
 | small strength | 7.5% | 30 |
 | medium strength | 5.25% | 45 |
 | large strength | 2.25% | 70 |
 
-The prices were set by rarity before the mystery potion took 10% from health. Since then medium health (14%) is rarer than speed (15%) but cheaper; the test checks the table itself (`"prices follow the user's table"`).
+The prices were set by rarity before the mystery and invisibility potions each took 10% from health. Since then medium health (10.5%) is rarer than speed (15%) but cheaper; the test checks the table itself (`"prices follow the user's table"`).
 
 ## Rendering
 

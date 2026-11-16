@@ -20,7 +20,7 @@ The user chose these four directions to make the game more fun. They do not all 
 
 ## Known issues
 
-- The 10th inventory item cannot be used: there are 10 potion kinds (`Potion.count`), but the keys only go from `1` to `9` (`Command.use_1..use_9`), and `renderInventory` shows `[1-10] use`. Possible fixes: map `0` to slot 10, or merge sizes into one slot.
+- Inventory items past the 9th cannot be used: there are 11 potion kinds (`Potion.count`, since the invisibility potion), but the keys only go from `1` to `9` (`Command.use_1..use_9`), and `renderInventory` shows `[1-10] use` or `[1-11] use`. Possible fixes: `0` and `-` for slots 10 and 11, or merge sizes into one slot. The user chose to leave it for later (2026-11-16).
 
 - Keys pressed during an animation are queued and run afterwards. Holding a direction keeps walking, which is fine, but a fast typist can queue moves they did not mean. Possible fix: flush the input buffer after each turn. Not requested.
 - Health potions found while at full HP cannot be drunk (by design); there is no way to drop items.

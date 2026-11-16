@@ -233,6 +233,7 @@ fn afterTurn(io: Io, out: *Io.Writer, game: *const brewdungeon.Game) !void {
     if (game.events.speed) playSfx(.speed);
     if (game.events.strength) playSfx(.strength);
     if (game.events.vision) playSfx(.vision);
+    if (game.events.invisible) playSfx(.invisible);
     if (game.events.stairs) playSfx(.stairs);
     if (game.events.buy) playSfx(.buy);
     if (game.events.curse) playSfx(.curse);

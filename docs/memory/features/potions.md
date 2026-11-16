@@ -17,20 +17,21 @@ A chest (25% of item spots, see [levels.md](levels.md)) holds **a potion or gold
 | 10-24 | speed | `speed_chance` 15 |
 | 25-39 | strength (size from `strengthFromRoll`) | `strength_chance` 15 |
 | 40-49 | vision | `vision_chance` 10 |
-| 50-59 | mystery | `mystery_chance` 10 (taken from health, a user choice) |
-| 60-99 | health (size from `fromRoll`) | the rest, 40 |
+| 50-59 | invisibility | `invisibility_chance` 10 (taken from health, a user choice) |
+| 60-69 | mystery | `mystery_chance` 10 (taken from health, a user choice) |
+| 70-99 | health (size from `fromRoll`) | the rest, 30 |
 
 3. Sizes (health and strength): small 50%, medium 35%, large 15%.
 
-Overall per chest: gold 15%, health 34% (small 17, medium 11.9, large 5.1), strength 12.75%, speed 12.75%, time stop 8.5%, vision 8.5%, mystery 8.5%.
+Overall per chest: gold 15%, health 25.5% (small 12.75, medium 8.93, large 3.83), strength 12.75%, speed 12.75%, time stop 8.5%, vision 8.5%, invisibility 8.5%, mystery 8.5%.
 
 The result is stored in `Game.chest_potion` (or `Game.chest_gold`) for that turn; `render` appends "(<label>)" or "(+N gold)". Use `Potion.label()` for names, not `@tagName`. Shop prices: `Potion.price()` (see [shop.md](shop.md)).
 
-Colors (`Potion.color()`, used for the shop's `!` and the names on the inventory screen): health green (`ansi_green`), strength brown (`ansi_brown`, 256-color 130), time stop yellow (`ansi_yellow`), vision purple (`ansi_purple`, 256-color 129), speed blue (`ansi_blue`), mystery white (`ansi_white`, my pick, not asked). The others are user choices.
+Colors (`Potion.color()`, used for the shop's `!` and the names on the inventory screen): health green (`ansi_green`), strength brown (`ansi_brown`, 256-color 130), time stop yellow (`ansi_yellow`), vision purple (`ansi_purple`, 256-color 129), speed blue (`ansi_blue`), mystery white (`ansi_white`, my pick, not asked), invisibility gray (`ansi_invisible`, 256-color 244, my pick, not asked). The others are user choices.
 
 ## Potion kinds
 
-`Potion.count` is 10. Single kinds have no sizes (a user rule for time stop; the same for speed, vision and mystery). `drink` handles the inventory and the full-HP refusal; `applyPotion` applies an effect (also used by a good mystery).
+`Potion.count` is 11. Single kinds have no sizes (a user rule for time stop; the same for speed, vision, invisibility and mystery). `drink` handles the inventory and the full-HP refusal; `applyPotion` applies an effect (also used by a good mystery).
 
 | Kind | Effect | Duration | Drinking again |
 |---|---|---|---|
@@ -39,6 +40,7 @@ Colors (`Potion.color()`, used for the shop's `!` and the names on the inventory
 | `speed` | 2 actions per round, cyan hero background | 10 rounds = 20 actions incl. the drink (`speed_turns`) | resets to 10 |
 | `strength_small/medium/large` | +1/+2/+3 attack damage (`strength()`) | drink round + 3 (`strength_turns`) | **bonus adds up**, counter resets to 3 (a user rule) |
 | `vision` | whole map visible, field of view off | drink round + 3 (`vision_turns`) | resets to 3 |
+| `invisibility` | monsters only wander (no chase, no bite, even next to the hero); attacking a monster ends it (`revealed`: render appends "(you are visible again)"); the hero `@` is gray | drink round + 5 (`invisible_turns`) | resets to 5 |
 | `mystery` | 50% (`mystery_good_chance`): a random chest potion (never a mystery), applied at once; 50%: a random `Curse` | see below | - |
 
 ## Mystery potion and curses (user rules)
@@ -56,7 +58,7 @@ Its name is shown as just `???` everywhere (label, inventory line, shop, chest m
 While `isCursed()` (slow, paralyzed, blind or confused) the hero's `@` is red (a user rule). Tests: `"a mystery potion is good half the time and a curse the other half"`, `"a mystery potion works at full health and says what it was"`, one test per curse, `"the hero is red while cursed"`.
 
 - A health potion at full HP is refused: `drink` returns false and the action uses no turn (`step` returns before the round ends). Every other potion works at full health.
-- Status line: `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N` (`writeHeader`).
+- Status line: `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N`, `INVISIBLE N` (`writeHeader`).
 - Each kind sets its `events.*` flag, which plays its sound (see [sound.md](sound.md)).
 - How the durations count (rounds, fresh flags, speed): [rounds.md](rounds.md).
 

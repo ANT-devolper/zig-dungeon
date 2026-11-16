@@ -38,6 +38,10 @@ pub const strength_turns = 3;
 const vision_chance = 10;
 /// Rounds the hero sees the whole map after the round it was drunk in.
 pub const vision_turns = 3;
+/// Chance (in %) that a chest's potion is an invisibility potion.
+const invisibility_chance = 10;
+/// Rounds the hero stays invisible after the round it was drunk in.
+pub const invisible_turns = 5;
 /// Chance (in %) that a chest's potion is a mystery potion.
 const mystery_chance = 10;
 /// Chance (in %) that a mystery potion is good (a random chest potion);
@@ -69,8 +73,8 @@ const totem_chance = 10;
 const totem_heal_chance = 60;
 
 /// Potion kinds the hero can carry: three sizes of health potion, three
-/// sizes of strength potion, plus the time stop, speed, vision and mystery
-/// potions, which are single kinds with no sizes.
+/// sizes of strength potion, plus the time stop, speed, vision,
+/// invisibility and mystery potions, which are single kinds with no sizes.
 pub const Potion = enum {
     small,
     medium,
@@ -81,10 +85,12 @@ pub const Potion = enum {
     strength_medium,
     strength_large,
     vision,
+    /// The monsters lose track of the hero; attacking ends it.
+    invisibility,
     /// 50% a random chest potion, 50% a curse (see `Curse`).
     mystery,
 
-    pub const count = 10;
+    pub const count = 11;
 
     /// HP restored (only health potions heal).
     pub fn heal(p: Potion) i32 {
@@ -136,19 +142,21 @@ pub const Potion = enum {
             .strength_medium => "medium strength potion",
             .strength_large => "large strength potion",
             .vision => "vision potion",
+            .invisibility => "invisibility potion",
             .mystery => "???", // the name is a mystery too (a user choice)
         };
     }
 
     /// ANSI color of each kind (the shop's '!' and the inventory names):
     /// health green, strength brown, time stop yellow, vision purple,
-    /// speed blue.
+    /// speed blue, invisibility gray.
     pub fn color(p: Potion) []const u8 {
         return switch (p) {
             .small, .medium, .large => ansi_green,
             .strength_small, .strength_medium, .strength_large => ansi_brown,
             .time_stop => ansi_yellow,
             .vision => ansi_purple,
+            .invisibility => ansi_invisible,
             .speed => ansi_blue,
             .mystery => ansi_white,
         };
@@ -162,6 +170,7 @@ pub const Potion = enum {
             .speed => 20,
             .time_stop => 25,
             .vision => 25,
+            .invisibility => 25,
             .large => 30,
             .strength_small => 30,
             .strength_medium => 45,
@@ -266,6 +275,7 @@ const ansi_shopkeeper = "\x1b[1;38;5;208m"; // orange: the shopkeeper's '@'
 const ansi_purple = "\x1b[1;38;5;129m"; // vision potions
 const ansi_brown = "\x1b[1;38;5;130m"; // strength potions
 const ansi_white = "\x1b[1;37m"; // mystery potions
+const ansi_invisible = "\x1b[1;38;5;244m"; // gray: invisibility potions, the invisible hero
 
 pub const Command = enum {
     up,
@@ -378,6 +388,7 @@ pub const Events = struct {
     speed: bool = false,
     strength: bool = false,
     vision: bool = false,
+    invisible: bool = false,
     stairs: bool = false,
     buy: bool = false,
     curse: bool = false,
@@ -543,6 +554,12 @@ pub const Game = struct {
     vision: u8 = 0,
     /// Vision was drunk during the current round, which does not count.
     vision_fresh: bool = false,
+    /// Rounds left hidden from the monsters (invisibility potion).
+    invisible: u8 = 0,
+    /// Invisibility was drunk during the current round, which does not count.
+    invisible_fresh: bool = false,
+    /// The hero attacked during the last turn and lost the invisibility.
+    revealed: bool = false,
     /// Curses from a bad mystery potion (see `Curse`). Like vision, each
     /// counter has a fresh flag: the round it was drunk in is free.
     slow: u8 = 0,
@@ -812,7 +829,9 @@ pub const Game = struct {
             Potion.strengthFromRoll(g.rng.uintLessThan(u8, 100))
         else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance)
             .vision
-        else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance + mystery_chance)
+        else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance + invisibility_chance)
+            .invisibility
+        else if (roll < time_stop_chance + speed_chance + strength_chance + vision_chance + invisibility_chance + mystery_chance)
             .mystery
         else
             Potion.fromRoll(g.rng.uintLessThan(u8, 100));
@@ -1090,6 +1109,7 @@ pub const Game = struct {
         g.shop_refused = null;
         g.offering_made = false;
         g.offering_refused = false;
+        g.revealed = false;
         g.totem_curse = null;
         g.mystery_potion = null;
         g.mystery_curse = null;
@@ -1123,6 +1143,13 @@ pub const Game = struct {
             .up, .down, .left, .right => {
                 const target = g.hero.add(action.delta());
                 if (g.monsterAt(target)) |i| {
+                    // Attacking gives the hero away: the invisibility ends
+                    // and the monsters act normally this round.
+                    if (g.invisible > 0) {
+                        g.invisible = 0;
+                        g.invisible_fresh = false;
+                        g.revealed = true;
+                    }
                     g.monsters[i].hp -= g.attackDamage();
                     g.hit_pos = target;
                     if (g.monsters[i].hp <= 0) {
@@ -1222,18 +1249,22 @@ pub const Game = struct {
         } else if (g.vision > 0) {
             g.vision -= 1;
         }
+        // Invisibility: read before the tick, so its last round still hides.
+        const hidden = g.invisible > 0;
+        tickCurse(&g.invisible, &g.invisible_fresh);
         // Slowness: the monsters get a second turn in every slow round.
         const slow = g.slow > 0 and !g.slow_fresh;
         tickCurse(&g.slow, &g.slow_fresh);
         tickCurse(&g.blind, &g.blind_fresh);
         tickCurse(&g.confused, &g.confused_fresh);
         if (!frozen) {
-            g.monstersTurn();
-            if (slow and g.state == .playing) g.monstersTurn();
+            g.monstersTurn(hidden);
+            if (slow and g.state == .playing) g.monstersTurn(hidden);
         }
     }
 
-    /// One round of a curse counter (the drink round is free).
+    /// One round of a counter with a fresh flag (the drink round is free):
+    /// curses and invisibility.
     fn tickCurse(counter: *u8, fresh: *bool) void {
         if (fresh.*) {
             fresh.* = false;
@@ -1321,6 +1352,12 @@ pub const Game = struct {
                 g.events.vision = true;
                 g.message = "Your eyes glow! You see the whole map.";
             },
+            .invisibility => {
+                g.invisible = invisible_turns; // drinking again resets, never adds
+                g.invisible_fresh = true;
+                g.events.invisible = true;
+                g.message = "You fade from sight! The monsters lose track of you.";
+            },
             .strength_small, .strength_medium, .strength_large => {
                 g.strength_bonus += kind.strength(); // bonuses add up
                 g.strength = strength_turns; // the counter resets, never adds
@@ -1383,10 +1420,15 @@ pub const Game = struct {
         return g.slow > 0 or g.paralyzed or g.blind > 0 or g.confused > 0;
     }
 
-    fn monstersTurn(g: *Game) void {
+    /// Every monster acts once. While the hero is `hidden` (invisible), no
+    /// monster knows where the hero is: they only wander, even next to
+    /// the hero, so a chase stops and nobody bites.
+    fn monstersTurn(g: *Game, hidden: bool) void {
         for (g.monsters[0..g.monster_count]) |*m| {
             const dist = m.pos.manhattan(g.hero);
-            if (dist == 1) {
+            if (hidden) {
+                if (g.rng.uintLessThan(u8, 100) < wander_chance) g.wander(m);
+            } else if (dist == 1) {
                 g.hp -= monster_damage;
                 g.damage_taken += monster_damage;
                 m.bit = true;
@@ -1522,7 +1564,15 @@ pub const Game = struct {
                 } else if (p.eql(g.hero)) blk: {
                     // The hero always stands out: cyan, or red when just hurt.
                     // Red while cursed by a mystery potion, like when hurt.
-                    color = if (hurt or g.isCursed()) ansi_red else if (g.isFast()) ansi_fast else ansi_cyan;
+                    // Gray while invisible.
+                    color = if (hurt or g.isCursed())
+                        ansi_red
+                    else if (g.invisible > 0)
+                        ansi_invisible
+                    else if (g.isFast())
+                        ansi_fast
+                    else
+                        ansi_cyan;
                     break :blk '@';
                 } else if (g.isShopkeeper(p)) blk: {
                     color = ansi_shopkeeper;
@@ -1603,6 +1653,7 @@ pub const Game = struct {
         if (g.offering_refused) {
             try w.print(" (the offering costs {d} gold, you have {d})", .{ offering_price, g.inventory.gold });
         }
+        if (g.revealed) try w.writeAll(" (you are visible again)");
         if (g.totem_curse != null) {
             if (opts.color) try w.writeAll(ansi_red);
             try w.writeAll(" (a totem curse)");
@@ -1682,6 +1733,7 @@ pub const Game = struct {
         if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
         if (g.strength > 0) try w.print("   STRENGTH +{d} ({d})", .{ g.strength_bonus, g.strength });
         if (g.vision > 0) try w.print("   VISION {d}", .{g.vision});
+        if (g.invisible > 0) try w.print("   INVISIBLE {d}", .{g.invisible});
         if (g.slow > 0) try w.print("   SLOW {d}", .{g.slow});
         if (g.blind > 0) try w.print("   BLIND {d}", .{g.blind});
         if (g.confused > 0) try w.print("   CONFUSED {d}", .{g.confused});
@@ -1716,6 +1768,7 @@ pub const Game = struct {
                 .strength_medium => "Medium strength potion (+2 dmg, 3 turns)",
                 .strength_large => "Large strength potion  (+3 dmg, 3 turns)",
                 .vision => "Vision potion        (3 turns)",
+                .invisibility => "Invisibility potion  (5 turns)",
                 .mystery => "???",
             };
             if (color) {
@@ -2327,7 +2380,7 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.fromRoll(@intCast(r)).index()] += 1;
     // Time stop has no sizes: it never comes out of the size roll.
-    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0, 0, 0, 0, 0, 0 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 50, 35, 15, 0, 0, 0, 0, 0, 0, 0, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.small.heal());
     try testing.expectEqual(@as(i32, 3), Potion.medium.heal());
     try testing.expectEqual(@as(i32, 5), Potion.large.heal());
@@ -2337,7 +2390,7 @@ test "potion sizes: small 50%, medium 35%, large 15%" {
 test "strength potions add 1, 2 and 3 damage and use the same size split" {
     var counts: [Potion.count]usize = @splat(0);
     for (0..100) |r| counts[Potion.strengthFromRoll(@intCast(r)).index()] += 1;
-    try testing.expectEqual([Potion.count]usize{ 0, 0, 0, 0, 0, 50, 35, 15, 0, 0 }, counts);
+    try testing.expectEqual([Potion.count]usize{ 0, 0, 0, 0, 0, 50, 35, 15, 0, 0, 0 }, counts);
     try testing.expectEqual(@as(i32, 1), Potion.strength_small.strength());
     try testing.expectEqual(@as(i32, 2), Potion.strength_medium.strength());
     try testing.expectEqual(@as(i32, 3), Potion.strength_large.strength());
@@ -2419,12 +2472,13 @@ test "strength combines with speed and time stop: it counts rounds, not actions"
     try testing.expectEqual(@as(i32, hero_damage), g.attackDamage());
 }
 
-test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision, 10% mystery and 40% health" {
+test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision, 10% invisibility, 10% mystery and 30% health" {
     var potions: usize = 0;
     var time_stops: usize = 0;
     var speeds: usize = 0;
     var strengths: usize = 0;
     var visions: usize = 0;
+    var invisibles: usize = 0;
     var mysteries: usize = 0;
     var healths: usize = 0;
     var seed: u64 = 0;
@@ -2439,6 +2493,7 @@ test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision, 1
             .speed => speeds += 1,
             .strength_small, .strength_medium, .strength_large => strengths += 1,
             .vision => visions += 1,
+            .invisibility => invisibles += 1,
             .mystery => mysteries += 1,
             .small, .medium, .large => healths += 1,
         }
@@ -2448,7 +2503,8 @@ test "chest potions: about 10% time stop, 15% speed, 15% strength, 10% vision, 1
     try testing.expect(strengths >= 200 and strengths <= 400); // 10%..20%
     try testing.expect(visions >= 100 and visions <= 300); // 5%..15%
     try testing.expect(mysteries >= 100 and mysteries <= 300); // 5%..15%
-    try testing.expect(healths >= 700 and healths <= 900); // 35%..45%
+    try testing.expect(invisibles >= 100 and invisibles <= 300); // 5%..15%
+    try testing.expect(healths >= 500 and healths <= 700); // 25%..35%
 }
 
 test "vision works at full health and shows its counter" {
@@ -3741,8 +3797,8 @@ test "the shopkeeper blocks the way" {
 }
 
 test "prices follow the user's table" {
-    // Health S, M, L, time stop, speed, strength S, M, L, vision, mystery.
-    const prices = [Potion.count]u32{ 10, 15, 30, 25, 20, 30, 45, 70, 25, 10 };
+    // Health S, M, L, time stop, speed, strength S, M, L, vision, invisibility, mystery.
+    const prices = [Potion.count]u32{ 10, 15, 30, 25, 20, 30, 45, 70, 25, 25, 10 };
     for (std.enums.values(Potion), 0..) |p, i| try testing.expectEqual(prices[i], p.price());
     // The rarest potion is the most expensive.
     for (std.enums.values(Potion)) |p| try testing.expect(p.price() <= Potion.strength_large.price());
@@ -4149,4 +4205,149 @@ test "fountains, offerings and totems have their own symbols and colors" {
     try testing.expect(std.mem.indexOf(u8, out, ansi_blue ++ "~") != null);
     try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ "+") != null);
     try testing.expect(std.mem.indexOf(u8, out, ansi_purple ++ "Y") != null);
+}
+
+// Invisibility tests. In the pocket the monster cannot move at all (walls
+// and the hero all around), so only biting matters.
+const invisible_pocket_layout: Layout = &.{
+    "#####",
+    "#@M##",
+    "#####",
+};
+
+// An open room: the monster starts 3 tiles to the right of the hero,
+// inside the chase radius.
+const invisible_room_layout: Layout = &.{
+    "###########",
+    "#.........#",
+    "#.........#",
+    "#..@..M...#",
+    "#.........#",
+    "#.........#",
+    "###########",
+};
+
+test "an invisibility potion hides the hero for the drink round and 5 more" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    g.step(.use_1);
+    try testing.expect(g.events.invisible);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp); // the drink round is hidden
+    try testing.expectEqual(@as(u8, invisible_turns), g.invisible);
+    for (0..invisible_turns) |i| {
+        g.step(.wait);
+        try testing.expectEqual(@as(i32, start_max_hp), g.hp);
+        try testing.expectEqual(@as(u8, @intCast(invisible_turns - 1 - i)), g.invisible);
+    }
+    g.step(.wait); // visible again: the monster bites
+    try testing.expectEqual(@as(i32, start_max_hp - monster_damage), g.hp);
+}
+
+test "a monster next to an invisible hero does not bite" {
+    var seed: u64 = 0;
+    while (seed < 200) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, invisible_room_layout);
+        g.monsters[0].pos = g.hero.add(.{ .x = 1, .y = 0 });
+        g.inventory.add(.invisibility);
+        g.step(.use_1);
+        for (0..invisible_turns) |_| g.step(.wait);
+        try testing.expectEqual(@as(i32, start_max_hp), g.hp);
+    }
+}
+
+test "monsters within chase range do not come after an invisible hero" {
+    // Visible, the monster 3 tiles away always steps closer. Invisible, it
+    // only wanders: it steps at most 30% of the time, in a random direction.
+    var closer: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 400) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, invisible_room_layout);
+        g.inventory.add(.invisibility);
+        const before = g.monsters[0].pos.manhattan(g.hero);
+        g.step(.use_1);
+        if (g.monsters[0].pos.manhattan(g.hero) < before) closer += 1;
+    }
+    try testing.expect(closer < 400 * 15 / 100); // about 30% / 4 = 7.5%
+}
+
+test "a monster that was chasing stops when the hero turns invisible" {
+    var closer: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 400) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, invisible_room_layout);
+        g.inventory.add(.invisibility);
+        const start = g.monsters[0].pos.manhattan(g.hero);
+        g.step(.wait);
+        const chasing = g.monsters[0].pos.manhattan(g.hero);
+        try testing.expectEqual(start - 1, chasing); // it was chasing
+        g.step(.use_1);
+        g.step(.wait);
+        if (g.monsters[0].pos.manhattan(g.hero) < chasing) closer += 1;
+    }
+    try testing.expect(closer < 400 * 30 / 100);
+}
+
+test "attacking a monster ends the invisibility" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    g.step(.use_1);
+    g.step(.right); // hit the monster (3 HP, 2 damage: it survives)
+    try testing.expectEqual(@as(u8, 0), g.invisible);
+    try testing.expect(g.revealed);
+    // Seen again, the monster bites back in the same round.
+    try testing.expectEqual(@as(i32, start_max_hp - monster_damage), g.hp);
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    // The bite replaces the hit message; the reveal note is still appended.
+    try testing.expect(std.mem.indexOf(u8, out, "A monster bites you! (you are visible again)") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "INVISIBLE") == null);
+}
+
+test "drinking invisibility again resets the counter to 5" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    g.inventory.add(.invisibility);
+    g.step(.use_1);
+    g.step(.wait);
+    g.step(.wait);
+    try testing.expectEqual(@as(u8, invisible_turns - 2), g.invisible);
+    g.step(.use_1);
+    try testing.expectEqual(@as(u8, invisible_turns), g.invisible);
+}
+
+test "invisibility works at full health" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    g.step(.use_1);
+    try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.invisibility));
+    try testing.expectEqualStrings("You fade from sight! The monsters lose track of you.", g.message);
+}
+
+test "the header shows INVISIBLE N and the hero is gray" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    g.step(.use_1);
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, "INVISIBLE 5") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_invisible ++ "@") != null);
+    try testing.expectEqualStrings(ansi_invisible, Potion.invisibility.color());
+}
+
+test "the inventory lists the invisibility potion" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "1) Invisibility potion  (5 turns) ..... x1") != null);
 }

@@ -34,6 +34,7 @@ pub const Sfx = enum {
     speed,
     strength,
     vision,
+    invisible,
     stairs,
     buy,
     curse,
@@ -87,6 +88,11 @@ pub const Sfx = enum {
             .vision => &.{
                 .{ .freq_start = 880, .freq_end = 1320, .ms = 120, .volume = 0.3 },
                 .{ .freq_start = 1320, .ms = 160, .volume = 0.3 },
+            },
+            // A soft fade downwards: the hero vanishes.
+            .invisible => &.{
+                .{ .freq_start = 1200, .freq_end = 600, .ms = 150, .volume = 0.2 },
+                .{ .freq_start = 600, .freq_end = 300, .ms = 200, .volume = 0.12 },
             },
             .stairs => &.{
                 .{ .freq_start = 660, .ms = 90 },

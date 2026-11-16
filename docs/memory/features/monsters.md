@@ -2,7 +2,8 @@
 
 Code: `monstersTurn`, `moveMonsterToward`, `wander`, `isFreeForMonster`, `Monster` in `src/root.zig`.
 
-- Each round (see [rounds.md](rounds.md)), unless time is stopped, every monster acts once:
+- Each round (see [rounds.md](rounds.md)), unless time is stopped, every monster acts once (`monstersTurn(hidden)`):
+  - **Hero invisible** (`hidden`, the invisibility potion, see [potions.md](potions.md)): every monster only wanders (`wander_chance` 30%), even next to the hero: no chase and no bite (a user rule). The AI keeps no chase state (it decides by distance every round), so a chase already under way simply stops.
   - **Next to the hero:** it bites for `monster_damage` (1). `Monster.bit` marks it for the white-on-red highlight, and `Game.damage_taken` triggers the red flash and shake.
   - **Within `chase_radius`** (6, Manhattan distance): it steps toward the hero (`moveMonsterToward`).
   - **Otherwise:** `wander_chance` (30%) per round to step in a random free direction (`wander`).

@@ -74,7 +74,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `$`    | gold, +10 (green)  |
 | `&`    | chest: 20-50 gold or a potion (magenta) |
 | `>`    | stairs, your goal (yellow) |
-| `!`    | potion for sale in a shop: health green, strength brown, time stop yellow, vision purple, speed blue, mystery white |
+| `!`    | potion for sale in a shop: health green, strength brown, time stop yellow, vision purple, speed blue, invisibility gray, mystery white |
 | `@`    | the shopkeeper (orange) |
 | `~`    | fountain: heals 5 HP once (blue) |
 | `+`    | offering at a fountain: 40 gold for +2 max HP (yellow) |
@@ -93,12 +93,13 @@ Press a key. It acts at once, with no need to press **Enter**:
 - Take the stairs to go down a level. Your HP and gold carry over.
 - The dungeon has **no bottom**: every level is a new maze, and the goal is to go **as deep as you can**. Levels 1, 2 and 3 have 3, 5 and 7 monsters, and from level 4 on there are 8. Monsters also get tougher: 3 HP on levels 1-3, then **+1 HP every 3 levels** (4 HP on levels 4-6, 5 HP on 7-9, ...). Their bite always does 1 damage.
 - Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and loot tends to hide in dead ends. Each item spot holds gold or, 1 time in 4, a chest. A chest holds either 20 to 50 gold or a potion.
-- Most chests (85%) hold a potion; the other 15% hold gold (never both). Chest potions are a **time stop potion** 10% of the time, a **speed potion** 15% of the time a **vision potion** 10% of the time and a **mystery potion** 10% of the time; these are single kinds with no sizes. Another 15% are **strength potions**: small (+1 damage, 50%), medium (+2 damage, 35%) or large (+3 damage, 15%). The other 40% are health potions: small (+1 HP, 50%), medium (+3 HP, 35%) or large (+5 HP, 15%).
+- Most chests (85%) hold a potion; the other 15% hold gold (never both). Chest potions are a **time stop potion** 10% of the time, a **speed potion** 15% of the time, a **vision potion** 10% of the time, an **invisibility potion** 10% of the time and a **mystery potion** 10% of the time; these are single kinds with no sizes. Another 15% are **strength potions**: small (+1 damage, 50%), medium (+2 damage, 35%) or large (+3 damage, 15%). The other 30% are health potions: small (+1 HP, 50%), medium (+3 HP, 35%) or large (+5 HP, 15%).
 - The game runs in **rounds**. Normally each of your actions is one round. Monsters act, and effect counters tick, once per round.
 - **Time stop** freezes every monster for the round you drink it and 3 more rounds: they do not move or attack, but you can still hit them. Frozen monsters turn blue and the status line shows `TIME STOP N`, the free rounds left. Drinking another one resets it to 3. It works at full health.
 - **Speed** makes you fast for 10 rounds: you get **2 actions per round**, so monsters move and bite only once for every 2 of your actions. That is 20 actions in total, counting the one where you drink it. Your `@` gets a cyan background and the status line shows `SPEED N`. Drinking another one resets it to 10.
 - **Strength** adds its bonus to your attack damage (normally 2) for the round you drink it and 3 more rounds, whatever the size. The status line shows `STRENGTH +B (N)`: the bonus and the rounds left. Drinking another strength potion while one is active **adds** its bonus and resets the counter to 3 (small + large = +4). It works at full health.
 - **Vision** lets you see the whole map (monsters, gold, chests and the stairs) for the round you drink it and 3 more rounds. The status line shows `VISION N`, the rounds left. Drinking another one resets it to 3. It works at full health.
+- **Invisibility** hides you from the monsters for the round you drink it and 5 more rounds. They stop chasing you and only wander around, even if they are right next to you, and they do not bite. **Attacking a monster gives you away**: the invisibility ends at once and the monsters act normally that round. Your `@` turns gray and the status line shows `INVISIBLE N`, the rounds left. Drinking another one resets it to 5. It works at full health.
 - **Mystery**, shown as `???`, is a gamble that works at full health. Half the time it is one of the chest potions above (the message says which). The other half it is a **curse**, one of five, each just as likely, and your `@` turns red while a curse lasts:
   - **slow**: the monsters act twice per round for 3 rounds after the one you drink it in (`SLOW N`);
   - **paralysis**: your next action is lost (`PARALYZED`);
@@ -116,7 +117,7 @@ Press a key. It acts at once, with no need to press **Enter**:
   | small health, mystery | 10 |
   | medium health | 15 |
   | speed | 20 |
-  | time stop, vision | 25 |
+  | time stop, vision, invisibility | 25 |
   | large health, small strength | 30 |
   | medium strength | 45 |
   | large strength | 70 |
