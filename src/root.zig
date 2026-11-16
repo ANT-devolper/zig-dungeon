@@ -246,7 +246,8 @@ pub const MonsterKind = enum {
     small_slime,
     /// Steals gold instead of biting, then runs away with it.
     thief,
-
+    /// Tough and hits for 2, but slow: acts every other round, sees 2 tiles.
+    brute,
     /// The letter drawn on the map.
     pub fn symbol(k: MonsterKind) u8 {
         return switch (k) {
@@ -255,6 +256,7 @@ pub const MonsterKind = enum {
             .slime => 'S',
             .small_slime => 's',
             .thief => 'T',
+            .brute => 'B',
         };
     }
 
@@ -266,6 +268,7 @@ pub const MonsterKind = enum {
             .slime => Game.monsterHp(level) + 1,
             .small_slime => @max(1, @divTrunc(Game.monsterHp(level), 2)),
             .thief => @max(1, Game.monsterHp(level) - 1),
+            .brute => Game.monsterHp(level) + 3,
         };
     }
 
@@ -273,6 +276,7 @@ pub const MonsterKind = enum {
     pub fn damage(k: MonsterKind) i32 {
         return switch (k) {
             .monster, .rat, .slime, .small_slime, .thief => monster_damage,
+            .brute => brute_damage,
         };
     }
 
@@ -283,6 +287,7 @@ pub const MonsterKind = enum {
             .monster, .slime, .small_slime => 4,
             .rat => 5, // the monster's + 1
             .thief => 5,
+            .brute => 2,
         };
     }
 
@@ -301,6 +306,7 @@ pub const MonsterKind = enum {
             .rat => 2,
             .slime, .small_slime => 3,
             .thief => 4,
+            .brute => 5,
         };
     }
 
@@ -312,6 +318,7 @@ pub const MonsterKind = enum {
             .slime => 10,
             .small_slime => 0, // only from a slime's split
             .thief => 10,
+            .brute => 10,
         };
     }
 
@@ -321,6 +328,7 @@ pub const MonsterKind = enum {
             .rat => "A rat bites you!",
             .slime, .small_slime => "A slime bites you!",
             .thief => "The thief stabs you!",
+            .brute => "The brute hits you hard!",
         };
     }
 
@@ -330,6 +338,7 @@ pub const MonsterKind = enum {
             .rat => "You hit the rat.",
             .slime, .small_slime => "You hit the slime.",
             .thief => "You hit the thief.",
+            .brute => "You hit the brute.",
         };
     }
 
@@ -340,6 +349,7 @@ pub const MonsterKind = enum {
             .slime => "You defeated a slime!", // when there is no room to split
             .small_slime => "You defeated a small slime!",
             .thief => "You defeated the thief!",
+            .brute => "You defeated the brute!",
         };
     }
 };
@@ -351,6 +361,8 @@ const rat_group_max = 3;
 const slime_split = 2;
 /// Gold a thief steals (all of it if the hero has less), once.
 const thief_steal = 25;
+/// A brute's bite.
+const brute_damage = 2;
 
 pub const Monster = struct {
     pos: Pos,
@@ -358,6 +370,9 @@ pub const Monster = struct {
     kind: MonsterKind = .monster,
     /// Gold a thief carries after stealing it (it then runs away).
     gold: u32 = 0,
+    /// A brute acted last round, so it rests this one (it acts every other
+    /// round).
+    rested: bool = false,
     /// True if this monster bit the hero during the last turn.
     bit: bool = false,
 };
@@ -1171,6 +1186,7 @@ pub const Game = struct {
                     'S' => g.addMonster(p, .slime),
                     's' => g.addMonster(p, .small_slime),
                     'T' => g.addMonster(p, .thief),
+                    'B' => g.addMonster(p, .brute),
                     else => {},
                 }
             }
@@ -1654,6 +1670,12 @@ pub const Game = struct {
     /// the hero, so a chase stops and nobody bites.
     fn monstersTurn(g: *Game, hidden: bool) void {
         for (g.monsters[0..g.monster_count]) |*m| {
+            // A brute acts every other round.
+            if (m.kind == .brute) {
+                const resting = m.rested;
+                m.rested = !resting;
+                if (resting) continue;
+            }
             for (0..m.kind.actions()) |_| {
                 g.monsterAct(m, hidden);
                 if (g.state != .playing) return;
@@ -4969,6 +4991,28 @@ test "a thief with nothing to steal bites" {
 test "a thief chases from 5 tiles away" {
     try testing.expect(alwaysChasesFrom(.thief, 5));
     try testing.expect(!alwaysChasesFrom(.thief, 6));
+}
+
+test "a brute bites for 2 and acts every other round" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#####",
+        "#@B##",
+        "#####",
+    });
+    try testing.expectEqual(@as(i32, 3 + 3), g.monsters[0].hp);
+    g.step(.wait); // acts: bites for 2
+    try testing.expectEqual(@as(i32, start_max_hp - 2), g.hp);
+    try testing.expectEqualStrings("The brute hits you hard!", g.message);
+    g.step(.wait); // rests
+    try testing.expectEqual(@as(i32, start_max_hp - 2), g.hp);
+    g.step(.wait); // acts again
+    try testing.expectEqual(@as(i32, start_max_hp - 4), g.hp);
+}
+
+test "a brute only chases from 2 tiles away" {
+    try testing.expect(alwaysChasesFrom(.brute, 2));
+    try testing.expect(!alwaysChasesFrom(.brute, 3));
 }
 
 test "every kind wanders while the hero is invisible" {
