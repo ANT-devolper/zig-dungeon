@@ -14,7 +14,7 @@ The user chose these four directions to make the game more fun. They do not all 
   - [ ] Thief (`T`): steals gold (the score) and runs away; killing it gives the gold back.
   - [ ] Ghost (`G`): walks through walls, from level 5 on.
   - [ ] Slime (`S`): splits into two small slimes when it dies.
-- [ ] **Sneak attack.** Hitting a monster that is wandering (has not started chasing, outside `chase_radius`) deals double damage. Uses the fog and field of view.
+- [x] **Sneak attack.** Done on 2026-11-16, reshaped by the user: a hit while invisible or during time stop deals double damage. See [features/monsters.md](features/monsters.md).
 - [ ] **Level-up perks.** Every 3 levels (the same pace as monster HP), the stairs offer a choice with one key: +3 max HP, +1 permanent damage or +1 view radius. Fixes the late game, where `max_hp` (10) and the hero's damage (2) never grow while monster HP does.
 - [x] **Altars and fountains.** Done on 2026-11-16, reshaped by the user: a fountain level (in place of 30% of shops) with a free heal and an offering that sells max HP, and a totem in place of a loot spot (full heal or curse). See [features/fountains-totems.md](features/fountains-totems.md). The "altar identifies a mystery potion" idea was dropped.
 

@@ -85,6 +85,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 
 - You start with **10 HP**, which is also your max HP. Offerings at fountains raise the max (the header shows `HP current/max`).
 - Walk into a monster to attack it. Each hit deals 2 damage and monsters have 3 HP, so it takes two hits. A hit makes the monster blink with a `*`, or with an `X` when it dies.
+- **Sneak attack**: a hit while you are **invisible** or while **time is stopped** deals **double damage**, strength included ((2 + bonus) x 2, so 4 without strength: a 3 or 4 HP monster dies in one hit). Having both at once is still double. The message shows `(sneak attack: N damage)`. Hitting still ends invisibility, but not time stop.
 - You only see what is in your line of sight, up to 5 tiles away, and walls block your view. Outside it the maze is drawn in light gray, and monsters, gold and the stairs are hidden.
 - Defeat every monster on a level and the stairs are revealed: they show on the map from anywhere until you go down.
 - Clearing a level is also **rewarded**: the moment the last monster dies you get chest rolls straight into your inventory (each one a potion or 20 to 50 gold, like a chest). You get 1 chest on levels 1-3, 2 on levels 4-6, 3 on levels 7-9, and one more every 3 levels as the monsters get tougher.

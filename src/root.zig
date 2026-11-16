@@ -11,6 +11,9 @@ pub const max_monsters = 8;
 pub const start_max_hp = 10;
 
 const hero_damage = 2;
+/// A sneak attack (hero invisible or time stopped) multiplies the hero's
+/// whole damage, strength bonus included.
+const sneak_multiplier = 2;
 /// Monster HP on levels 1-3; they gain 1 HP every `monster_hp_step` levels.
 const monster_hp = 3;
 const monster_hp_step = 3;
@@ -560,6 +563,8 @@ pub const Game = struct {
     invisible_fresh: bool = false,
     /// The hero attacked during the last turn and lost the invisibility.
     revealed: bool = false,
+    /// Damage of the sneak attack made during the last turn (0 if none).
+    sneak_damage: i32 = 0,
     /// Curses from a bad mystery potion (see `Curse`). Like vision, each
     /// counter has a fresh flag: the round it was drunk in is free.
     slow: u8 = 0,
@@ -1110,6 +1115,7 @@ pub const Game = struct {
         g.offering_made = false;
         g.offering_refused = false;
         g.revealed = false;
+        g.sneak_damage = 0;
         g.totem_curse = null;
         g.mystery_potion = null;
         g.mystery_curse = null;
@@ -1143,14 +1149,20 @@ pub const Game = struct {
             .up, .down, .left, .right => {
                 const target = g.hero.add(action.delta());
                 if (g.monsterAt(target)) |i| {
+                    // A monster that cannot see the hero (invisible) or
+                    // cannot act (time stop) takes a sneak attack.
+                    const sneak = g.isSneaky();
                     // Attacking gives the hero away: the invisibility ends
-                    // and the monsters act normally this round.
+                    // and the monsters act normally this round. Time stop
+                    // goes on.
                     if (g.invisible > 0) {
                         g.invisible = 0;
                         g.invisible_fresh = false;
                         g.revealed = true;
                     }
-                    g.monsters[i].hp -= g.attackDamage();
+                    const damage = g.attackDamage() * @as(i32, if (sneak) sneak_multiplier else 1);
+                    if (sneak) g.sneak_damage = damage; // render() appends it
+                    g.monsters[i].hp -= damage;
                     g.hit_pos = target;
                     if (g.monsters[i].hp <= 0) {
                         g.removeMonster(i);
@@ -1281,6 +1293,12 @@ pub const Game = struct {
     /// True while the monsters are frozen by a time stop potion.
     pub fn timeStopped(g: *const Game) bool {
         return g.time_stop > 0;
+    }
+
+    /// True when a hit would be a sneak attack: the hero is invisible or
+    /// time is stopped (a user rule).
+    pub fn isSneaky(g: *const Game) bool {
+        return g.invisible > 0 or g.timeStopped();
     }
 
     /// True while the hero sees the whole map (vision potion).
@@ -1627,6 +1645,11 @@ pub const Game = struct {
         }
         if (g.in_shop) try g.writeForSale(w);
         try w.print("\n{s}", .{g.message});
+        if (g.sneak_damage > 0) {
+            if (opts.color) try w.writeAll(ansi_yellow);
+            try w.print(" (sneak attack: {d} damage)", .{g.sneak_damage});
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
         if (g.shop_bought) |p| {
             if (opts.color) try w.writeAll(ansi_green);
             try w.print(" ({s}, -{d} gold)", .{ p.label(), p.price() });
@@ -2730,9 +2753,10 @@ test "the hero can hit a frozen monster, which does not strike back" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, test_layout);
     g.inventory.add(.time_stop);
+    g.monsters[0].hp = 10; // survives the sneak attack
     g.step(.use_1);
-    g.step(.right); // attack the adjacent monster
-    try testing.expectEqual(@as(i32, monster_hp - hero_damage), g.monsters[0].hp);
+    g.step(.right); // attack the adjacent monster: a sneak attack (x2)
+    try testing.expectEqual(@as(i32, 10 - hero_damage * sneak_multiplier), g.monsters[0].hp);
     try testing.expectEqual(@as(i32, start_max_hp), g.hp);
 }
 
@@ -4295,16 +4319,17 @@ test "attacking a monster ends the invisibility" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, invisible_pocket_layout);
     g.inventory.add(.invisibility);
+    g.monsters[0].hp = 10; // survives the sneak attack
     g.step(.use_1);
-    g.step(.right); // hit the monster (3 HP, 2 damage: it survives)
+    g.step(.right); // hit the monster
     try testing.expectEqual(@as(u8, 0), g.invisible);
     try testing.expect(g.revealed);
     // Seen again, the monster bites back in the same round.
     try testing.expectEqual(@as(i32, start_max_hp - monster_damage), g.hp);
     var buf: [16384]u8 = undefined;
     const out = try renderToBuf(&g, &buf, .{});
-    // The bite replaces the hit message; the reveal note is still appended.
-    try testing.expect(std.mem.indexOf(u8, out, "A monster bites you! (you are visible again)") != null);
+    // The bite replaces the hit message; the notes are still appended.
+    try testing.expect(std.mem.indexOf(u8, out, "A monster bites you! (sneak attack: 4 damage) (you are visible again)") != null);
     try testing.expect(std.mem.indexOf(u8, out, "INVISIBLE") == null);
 }
 
@@ -4350,4 +4375,97 @@ test "the inventory lists the invisibility potion" {
     var w: std.Io.Writer = .fixed(&buf);
     try g.renderInventory(&w, false);
     try testing.expect(std.mem.indexOf(u8, w.buffered(), "1) Invisibility potion  (5 turns) ..... x1") != null);
+}
+
+test "an invisible hero's hit is a sneak attack for double damage" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    g.monsters[0].hp = 5;
+    g.step(.use_1);
+    try testing.expect(g.isSneaky());
+    g.step(.right);
+    try testing.expectEqual(@as(i32, 1), g.monsters[0].hp); // 5 - 2 x 2
+    try testing.expectEqual(@as(i32, 4), g.sneak_damage);
+}
+
+test "a hit during time stop is a sneak attack for double damage" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.time_stop);
+    g.monsters[0].hp = 5;
+    g.step(.use_1);
+    g.step(.right);
+    try testing.expectEqual(@as(i32, 1), g.monsters[0].hp);
+    try testing.expectEqual(@as(i32, 4), g.sneak_damage);
+}
+
+test "a sneak attack doubles the strength bonus too" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.strength_small);
+    g.inventory.add(.time_stop);
+    g.monsters[0].hp = 10;
+    g.step(.use_1); // strength +1
+    g.step(.use_1); // time stop (the strength potion's slot is gone)
+    g.step(.right);
+    try testing.expectEqual(@as(i32, 10 - (hero_damage + 1) * 2), g.monsters[0].hp);
+}
+
+test "invisibility and time stop together still only double the damage" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.invisibility);
+    g.inventory.add(.time_stop);
+    g.monsters[0].hp = 10;
+    g.step(.use_1);
+    g.step(.use_1);
+    g.step(.right);
+    try testing.expectEqual(@as(i32, 10 - hero_damage * 2), g.monsters[0].hp);
+}
+
+test "a normal hit is not a sneak attack" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.step(.right);
+    try testing.expectEqual(@as(i32, monster_hp - hero_damage), g.monsters[0].hp);
+    try testing.expectEqual(@as(i32, 0), g.sneak_damage);
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "sneak") == null);
+}
+
+test "a sneak attack kills a 3 HP monster in one hit" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.inventory.add(.invisibility);
+    g.step(.use_1);
+    g.step(.right); // the monster next to the hero has monster_hp (3)
+    try testing.expect(g.hit_killed);
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+}
+
+test "a sneak attack ends the invisibility but not the time stop" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.time_stop);
+    g.monsters[0].hp = 20;
+    g.step(.use_1);
+    g.step(.right);
+    try testing.expect(g.timeStopped());
+    g.step(.right); // still frozen: another sneak attack
+    try testing.expectEqual(@as(i32, 4), g.sneak_damage);
+    try testing.expectEqual(@as(i32, 20 - 8), g.monsters[0].hp);
+}
+
+test "the message shows the sneak attack damage" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    g.inventory.add(.time_stop);
+    g.monsters[0].hp = 10;
+    g.step(.use_1);
+    g.step(.right);
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "You hit the monster. (sneak attack: 4 damage)") != null);
+    const colored = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, colored, ansi_yellow ++ " (sneak attack: 4 damage)") != null);
 }

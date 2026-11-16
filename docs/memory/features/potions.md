@@ -36,11 +36,11 @@ Colors (`Potion.color()`, used for the shop's `!` and the names on the inventory
 | Kind | Effect | Duration | Drinking again |
 |---|---|---|---|
 | `small/medium/large` | +1/+3/+5 HP (`heal()`), capped at `Game.max_hp` (raised by offerings) through `Game.heal`, recorded in `Game.healed` | instant | - |
-| `time_stop` | monsters do not act (blue) | drink round + 3 (`time_stop_turns`) | resets to 3 |
+| `time_stop` | monsters do not act (blue); hits are sneak attacks (x2, see [monsters.md](monsters.md)) | drink round + 3 (`time_stop_turns`) | resets to 3 |
 | `speed` | 2 actions per round, cyan hero background | 10 rounds = 20 actions incl. the drink (`speed_turns`) | resets to 10 |
 | `strength_small/medium/large` | +1/+2/+3 attack damage (`strength()`) | drink round + 3 (`strength_turns`) | **bonus adds up**, counter resets to 3 (a user rule) |
 | `vision` | whole map visible, field of view off | drink round + 3 (`vision_turns`) | resets to 3 |
-| `invisibility` | monsters only wander (no chase, no bite, even next to the hero); attacking a monster ends it (`revealed`: render appends "(you are visible again)"); the hero `@` is gray | drink round + 5 (`invisible_turns`) | resets to 5 |
+| `invisibility` | monsters only wander (no chase, no bite, even next to the hero); attacking a monster is a sneak attack (x2) and ends it (`revealed`: render appends "(you are visible again)"); the hero `@` is gray | drink round + 5 (`invisible_turns`) | resets to 5 |
 | `mystery` | 50% (`mystery_good_chance`): a random chest potion (never a mystery), applied at once; 50%: a random `Curse` | see below | - |
 
 ## Mystery potion and curses (user rules)
