@@ -374,6 +374,50 @@ pub fn parseCommand(line: []const u8) ?Command {
     };
 }
 
+/// Reads one key press from any Reader. Returns null at the end of the input.
+/// - Skips '\n', which only comes from redirected input (a file with one
+///   command per line); Enter in a raw console is '\r'.
+/// - The arrow keys arrive as escape sequences (`ESC [ A` or `ESC O A`) and
+///   come out as the matching letter: up 'w', down 's', right 'd', left 'a'.
+///   Other sequences (Ctrl+arrow, Insert, F-keys...) are skipped whole.
+/// - An ESC followed by any other byte is dropped and that byte is returned.
+pub fn readKey(in: *std.Io.Reader) std.Io.Reader.Error!?u8 {
+    while (true) {
+        const b = try takeKeyByte(in) orelse return null;
+        if (b == '\n') continue;
+        if (b != 0x1b) return b;
+
+        const intro = try takeKeyByte(in) orelse return null;
+        if (intro != '[' and intro != 'O') {
+            if (intro == '\n') continue;
+            return intro;
+        }
+        // Parameter bytes (digits, ';'...) until the final byte 0x40-0x7E.
+        var params = false;
+        const final = while (true) {
+            const c = try takeKeyByte(in) orelse return null;
+            if (c >= 0x40 and c <= 0x7e) break c;
+            params = true;
+        };
+        if (params) continue;
+        switch (final) {
+            'A' => return 'w',
+            'B' => return 's',
+            'C' => return 'd',
+            'D' => return 'a',
+            else => continue,
+        }
+    }
+}
+
+/// One byte of input, or null at the end of it.
+fn takeKeyByte(in: *std.Io.Reader) std.Io.Reader.Error!?u8 {
+    return in.takeByte() catch |err| switch (err) {
+        error.EndOfStream => null,
+        else => |e| e,
+    };
+}
+
 /// Hand-drawn level used by tests: '#' wall, '.' floor, '@' start,
 /// '>' stairs, 'M' monster and '$' gold. Real levels are generated.
 /// Map rows for tests and fixed levels; tiles past the given rows and
@@ -1460,7 +1504,8 @@ pub const Title = struct {
     selected: TitleChoice = .play,
 
     /// Handles one key. Returns the confirmed choice, if any: Enter confirms
-    /// the selected option, `p` and `q` pick one directly, `w`/`s` move.
+    /// the selected option, `p` and `q` pick one directly, `w`/`s` move
+    /// (the up and down arrows arrive as `w`/`s`, see `readKey`).
     pub fn key(t: *Title, k: u8) ?TitleChoice {
         switch (std.ascii.toLower(k)) {
             'w' => t.selected = .play,
@@ -1617,6 +1662,46 @@ test "parseCommand handles keys, uppercase and \\r" {
     try testing.expectEqual(Command.inventory, parseCommand("I\r").?);
     try testing.expectEqual(@as(?Command, null), parseCommand(""));
     try testing.expectEqual(@as(?Command, null), parseCommand("x"));
+}
+
+/// Reads every key from `bytes` with `readKey` until the end of the input.
+fn readAllKeys(bytes: []const u8, out: []u8) ![]const u8 {
+    var in: std.Io.Reader = .fixed(bytes);
+    var n: usize = 0;
+    while (try readKey(&in)) |k| : (n += 1) out[n] = k;
+    return out[0..n];
+}
+
+test "readKey turns arrow keys into w a s d" {
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("wsda", try readAllKeys("\x1b[A\x1b[B\x1b[C\x1b[D", &buf));
+    try testing.expectEqualStrings("wsda", try readAllKeys("\x1bOA\x1bOB\x1bOC\x1bOD", &buf));
+}
+
+test "readKey skips other escape sequences" {
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("d", try readAllKeys("\x1b[1;5A\x1b[2~d", &buf));
+}
+
+test "readKey keeps plain keys and skips newlines" {
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("wq\r", try readAllKeys("w\nq\r", &buf));
+}
+
+test "readKey drops a lone escape" {
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("q", try readAllKeys("\x1bq", &buf));
+    try testing.expectEqualStrings("", try readAllKeys("\x1b", &buf));
+    try testing.expectEqualStrings("", try readAllKeys("\x1b[", &buf));
+}
+
+test "arrow keys move the cursor on the title screen" {
+    var buf: [16]u8 = undefined;
+    var t: Title = .{};
+    for (try readAllKeys("\x1b[B", &buf)) |k| try testing.expectEqual(@as(?TitleChoice, null), t.key(k));
+    try testing.expectEqual(TitleChoice.quit, t.selected);
+    for (try readAllKeys("\x1b[A", &buf)) |k| _ = t.key(k);
+    try testing.expectEqual(TitleChoice.play, t.selected);
 }
 
 test "a single key acts at once, so the screens never ask for Enter" {

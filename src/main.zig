@@ -131,7 +131,7 @@ fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bo
             game.step(cmd);
             try afterTurn(io, out, game);
         } else {
-            game.message = "Invalid command. Use w/a/s/d, ., i, 1-9 or q.";
+            game.message = "Invalid command. Use w/a/s/d or arrows, ., i, 1-9 or q.";
         }
     }
     return false;
@@ -157,18 +157,7 @@ fn leaveScreen(out: *Io.Writer) !void {
     try out.flush();
 }
 
-/// Reads one key press. Skips '\n', which only comes from redirected input
-/// (a file with one command per line); Enter in a raw console is '\r'.
-/// Returns null at the end of the input.
-fn readKey(in: *Io.Reader) !?u8 {
-    while (true) {
-        const b = in.takeByte() catch |err| switch (err) {
-            error.EndOfStream => return null,
-            else => |e| return e,
-        };
-        if (b != '\n') return b;
-    }
-}
+const readKey = brewdungeon.readKey;
 
 fn playSfx(sfx: sound.Sfx) void {
     if (!muted) sound.play(bank.get(sfx));

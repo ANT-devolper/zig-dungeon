@@ -1,13 +1,13 @@
 # Input and terminal
 
-Code: `src/term.zig` (`RawMode.enable`, `RawMode.restore`), `readKey`, `leaveScreen`, `alt_screen_on/off`, `ctrl_c` and the main loop in `src/main.zig`.
+Code: `src/term.zig` (`RawMode.enable`, `RawMode.restore`), `readKey` (in `src/root.zig`, tested), `leaveScreen`, `alt_screen_on/off`, `ctrl_c` and the main loop in `src/main.zig`.
 
 ## One key at a time (no Enter)
 
 A user request: every key press acts at once, as if Enter were pressed after it.
 
 - `term.RawMode.enable()` turns off line buffering and echo on stdin; `defer raw.restore()` puts the old mode back.
-  - **Windows:** std 0.17 has no `SetConsoleMode`, so `term.zig` declares `GetStdHandle`, `GetConsoleMode`, `SetConsoleMode` with `extern "kernel32"`. It clears `ENABLE_LINE_INPUT`, `ENABLE_ECHO_INPUT` and `ENABLE_PROCESSED_INPUT`.
+  - **Windows:** std 0.17 has no `SetConsoleMode`, so `term.zig` declares `GetStdHandle`, `GetConsoleMode`, `SetConsoleMode` with `extern "kernel32"`. It clears `ENABLE_LINE_INPUT`, `ENABLE_ECHO_INPUT` and `ENABLE_PROCESSED_INPUT`, and sets `ENABLE_VIRTUAL_TERMINAL_INPUT` so the arrow keys arrive as escape sequences (without it `ReadFile` drops them: no bytes at all).
   - **POSIX:** `std.posix.tcgetattr`/`tcsetattr`, clearing `ICANON`, `ECHO`, `ISIG` and `ICRNL` (so Enter is `\r` like on Windows), with `VMIN` 1, `VTIME` 0.
   - When stdin is not a console (a redirected file), it does nothing.
 - std's reader (`NtReadFile` on Windows) returns each key in this mode: **verified by the user** in a real console.

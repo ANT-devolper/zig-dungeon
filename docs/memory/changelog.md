@@ -2,9 +2,13 @@
 
 One entry per change, newest first. Format: `date` `hash` subject, then what changed (pages touched). The hash of the newest entry is filled in with the next commit.
 
+## 2026-11-16
+
+- `(this commit)` feat: move the hero with the arrow keys as well as wasd. `readKey` moved to `src/root.zig` and decodes arrow escape sequences; Windows raw mode turns on VT input. ([input-terminal](features/input-terminal.md))
+
 ## 2026-11-13
 
-- `(this commit)` feat: add a title screen with Play and Quit, and --no-title. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
+- `c13e25c` feat: add a title screen with Play and Quit, and --no-title. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
 - `036dc74` chore: rename the game to Brewdungeon. Executable and module are now `brewdungeon`; the header keeps `DUNGEON`.
 - `8ea1f05` feat: add a ??? potion that is a random potion or a curse. ([potions](features/potions.md), [rounds](features/rounds.md), [fov](features/fov.md), [shop](features/shop.md), [rendering](features/rendering.md), [sound](features/sound.md))
 - `7ad6c29` feat: use the whole map with a 31x13 maze and a single border. ([levels](features/levels.md), [shop](features/shop.md))

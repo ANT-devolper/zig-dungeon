@@ -11,6 +11,7 @@ const STD_INPUT_HANDLE: u32 = @bitCast(@as(i32, -10));
 const ENABLE_PROCESSED_INPUT: u32 = 0x0001;
 const ENABLE_LINE_INPUT: u32 = 0x0002;
 const ENABLE_ECHO_INPUT: u32 = 0x0004;
+const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x0200;
 
 extern "kernel32" fn GetStdHandle(n: u32) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetConsoleMode(h: *anyopaque, mode: *u32) callconv(.winapi) c_int;
@@ -35,7 +36,9 @@ pub const RawMode = struct {
             // Without ENABLE_PROCESSED_INPUT, Ctrl+C arrives as the key 0x03
             // instead of killing the game, so the game can quit cleanly.
             const off = ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT;
-            if (SetConsoleMode(h, mode & ~off) == 0) return .{};
+            // With VT input on, the arrow keys arrive as escape sequences
+            // (ESC [ A ...), like on POSIX. Without it they send no bytes.
+            if (SetConsoleMode(h, (mode & ~off) | ENABLE_VIRTUAL_TERMINAL_INPUT) == 0) return .{};
             return .{ .saved = .{ .handle = h, .mode = mode } };
         } else {
             const fd = std.posix.STDIN_FILENO;
