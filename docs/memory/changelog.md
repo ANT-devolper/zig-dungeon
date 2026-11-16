@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-16
 
-- `(this commit)` feat: add slimes that split in two when they die. `MonsterKind.slime` (`S`, HP +1) and `.small_slime` (`s`); `splitSlime` runs before the clear check. ([monsters](features/monsters.md))
+- `(this commit)` feat: add thieves that steal gold and run away. `MonsterKind.thief` (`T`), `Monster.gold`, `moveMonsterAway`, `stolen`/`recovered`, `events.stolen`. ([monsters](features/monsters.md))
+- `52e986c` feat: add slimes that split in two when they die. `MonsterKind.slime` (`S`, HP +1) and `.small_slime` (`s`); `splitSlime` runs before the clear check. ([monsters](features/monsters.md))
 - `656d4fc` feat: add rats that act twice per round and come in groups. `MonsterKind.rat` (`r`, 1 HP, sight 5, 2 actions); spawn kinds rolled by level and weight (`randomMonsterKind`); rats spawn in groups of 2-3. ([monsters](features/monsters.md))
 - `855a0ac` feat: give monsters a kind and a sight radius. `MonsterKind` holds the letter, HP, bite, sight and messages; `monsterAct` is one monster's action; `addMonster(pos, kind)`. The plain `M` now chases from 4 tiles instead of 6. ([monsters](features/monsters.md))
 - `15af93a` feat: deal double damage with sneak attacks. A hit while invisible or during time stop deals `attackDamage() * 2` (`isSneaky`, `sneak_multiplier`); render appends "(sneak attack: N damage)". ([monsters](features/monsters.md), [potions](features/potions.md), [backlog](backlog.md))

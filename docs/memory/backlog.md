@@ -11,7 +11,7 @@ The user chose these four directions to make the game more fun. They do not all 
 - [ ] **Monster variety.** New monster kinds that change how a fight plays, built on the existing round system (`monstersTurn`):
   - [x] Rat (`r`): 1 HP, acts twice per round, comes in groups (from level 2, sight 5).
   - [ ] Brute (`B`): acts every other round, bites for 2.
-  - [ ] Thief (`T`): steals gold (the score) and runs away; killing it gives the gold back.
+  - [x] Thief (`T`): steals 25 gold (the score) and runs away; killing it gives the gold back (from level 4, sight 5).
   - [ ] Ghost (`G`): walks through walls, from level 5 on.
   - [x] Slime (`S`): splits into two small slimes when it dies (from level 3).
 - [x] **Sneak attack.** Done on 2026-11-16, reshaped by the user: a hit while invisible or during time stop deals double damage. See [features/monsters.md](features/monsters.md).

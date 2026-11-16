@@ -12,10 +12,13 @@ Every monster has a `kind` (`MonsterKind`), which gives its letter, HP, bite, si
 | rat | `r` | 2 | 20 | 1 | 1 | 5 (the monster's + 1) | **2** (`actions()`): it moves twice, or bites twice |
 | slime | `S` | 3 | 10 | `monsterHp(level)` + 1 | 1 | 4 (my pick) | 1 |
 | small slime | `s` | 3 (only from a split) | 0 | max(1, `monsterHp(level)` / 2) | 1 | 4 | 1 |
+| thief | `T` | 4 | 10 | max(1, `monsterHp(level)` - 1) | 1 (only with no gold to steal) | 5 | 1 |
 
 Test layouts map each letter to its kind in `loadLayout`.
 
 **Slime split** (`splitSlime`): when a slime dies, `slime_split` (2) small slimes appear on its tile, then on free tiles next to it, while there is room (tiles and `max_monsters`). Message: "The slime splits in two!", or "The slime shrinks into a small slime!" when only one fits. The split happens **before** the clear check, so the stairs and the clear reward wait for the small slimes. Small slimes never split.
+
+**Thief** (`monsterAct`, `moveMonsterAway`): next to the hero, if the hero has gold, it steals `thief_steal` (25, or all if less) instead of biting, into `Monster.gold`. From then on it only runs away (`moveMonsterAway`: the free neighbor farthest from the hero, if that is farther) and never steals again. With no gold to steal it stabs for 1. Killing it gives its gold back (`recovered`). Render appends " (-N gold)" in red (`stolen`) and " (+N gold back)" in green; `events.stolen` plays `Sfx.curse`. If the hero leaves the level, the gold is lost.
 
 **Spawning** (`spawnMonsters`): the count stays `min(max_monsters, 1 + 2 * level)`. Each monster's kind is rolled by `randomMonsterKind` among the kinds whose `firstLevel()` is reached, weighted by `spawnWeight()` (level 1 is all `M`). A rat brings 1 or 2 more rats (`rat_group_min`..`rat_group_max` = a group of 2-3) on free tiles next to it (`freeSpotNear`), or anywhere if there is no room; they count toward the total, so the count is exact. Spots keep `monster_safe_distance` (5) from the hero (`monsterSpawnSpot`).
 

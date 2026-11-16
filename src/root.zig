@@ -244,6 +244,8 @@ pub const MonsterKind = enum {
     slime,
     /// What a slime splits into; never spawns on its own.
     small_slime,
+    /// Steals gold instead of biting, then runs away with it.
+    thief,
 
     /// The letter drawn on the map.
     pub fn symbol(k: MonsterKind) u8 {
@@ -252,6 +254,7 @@ pub const MonsterKind = enum {
             .rat => 'r',
             .slime => 'S',
             .small_slime => 's',
+            .thief => 'T',
         };
     }
 
@@ -262,13 +265,14 @@ pub const MonsterKind = enum {
             .rat => 1,
             .slime => Game.monsterHp(level) + 1,
             .small_slime => @max(1, @divTrunc(Game.monsterHp(level), 2)),
+            .thief => @max(1, Game.monsterHp(level) - 1),
         };
     }
 
     /// Damage of one bite.
     pub fn damage(k: MonsterKind) i32 {
         return switch (k) {
-            .monster, .rat, .slime, .small_slime => monster_damage,
+            .monster, .rat, .slime, .small_slime, .thief => monster_damage,
         };
     }
 
@@ -278,6 +282,7 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster, .slime, .small_slime => 4,
             .rat => 5, // the monster's + 1
+            .thief => 5,
         };
     }
 
@@ -295,6 +300,7 @@ pub const MonsterKind = enum {
             .monster => 1,
             .rat => 2,
             .slime, .small_slime => 3,
+            .thief => 4,
         };
     }
 
@@ -305,6 +311,7 @@ pub const MonsterKind = enum {
             .rat => 20,
             .slime => 10,
             .small_slime => 0, // only from a slime's split
+            .thief => 10,
         };
     }
 
@@ -313,6 +320,7 @@ pub const MonsterKind = enum {
             .monster => "A monster bites you!",
             .rat => "A rat bites you!",
             .slime, .small_slime => "A slime bites you!",
+            .thief => "The thief stabs you!",
         };
     }
 
@@ -321,6 +329,7 @@ pub const MonsterKind = enum {
             .monster => "You hit the monster.",
             .rat => "You hit the rat.",
             .slime, .small_slime => "You hit the slime.",
+            .thief => "You hit the thief.",
         };
     }
 
@@ -330,6 +339,7 @@ pub const MonsterKind = enum {
             .rat => "You defeated a rat!",
             .slime => "You defeated a slime!", // when there is no room to split
             .small_slime => "You defeated a small slime!",
+            .thief => "You defeated the thief!",
         };
     }
 };
@@ -339,11 +349,15 @@ const rat_group_min = 2;
 const rat_group_max = 3;
 /// Small slimes a slime splits into (fewer if there is no room).
 const slime_split = 2;
+/// Gold a thief steals (all of it if the hero has less), once.
+const thief_steal = 25;
 
 pub const Monster = struct {
     pos: Pos,
     hp: i32,
     kind: MonsterKind = .monster,
+    /// Gold a thief carries after stealing it (it then runs away).
+    gold: u32 = 0,
     /// True if this monster bit the hero during the last turn.
     bit: bool = false,
 };
@@ -498,6 +512,8 @@ pub const Events = struct {
     strength: bool = false,
     vision: bool = false,
     invisible: bool = false,
+    /// A thief stole gold from the hero.
+    stolen: bool = false,
     stairs: bool = false,
     buy: bool = false,
     curse: bool = false,
@@ -671,6 +687,10 @@ pub const Game = struct {
     revealed: bool = false,
     /// Damage of the sneak attack made during the last turn (0 if none).
     sneak_damage: i32 = 0,
+    /// Gold thieves stole during the last turn, and gold won back by
+    /// killing a thief (0 if none).
+    stolen: u32 = 0,
+    recovered: u32 = 0,
     /// Curses from a bad mystery potion (see `Curse`). Like vision, each
     /// counter has a fresh flag: the round it was drunk in is free.
     slow: u8 = 0,
@@ -1150,6 +1170,7 @@ pub const Game = struct {
                     'r' => g.addMonster(p, .rat),
                     'S' => g.addMonster(p, .slime),
                     's' => g.addMonster(p, .small_slime),
+                    'T' => g.addMonster(p, .thief),
                     else => {},
                 }
             }
@@ -1291,6 +1312,8 @@ pub const Game = struct {
         g.offering_refused = false;
         g.revealed = false;
         g.sneak_damage = 0;
+        g.stolen = 0;
+        g.recovered = 0;
         g.totem_curse = null;
         g.mystery_potion = null;
         g.mystery_curse = null;
@@ -1342,6 +1365,10 @@ pub const Game = struct {
                     const kind = g.monsters[i].kind;
                     if (g.monsters[i].hp <= 0) {
                         const dead_pos = g.monsters[i].pos;
+                        // A thief gives back the gold it carried.
+                        const carried = g.monsters[i].gold;
+                        g.inventory.gold += carried;
+                        g.recovered = carried;
                         g.removeMonster(i);
                         g.hit_killed = true;
                         // A slime splits before the clear check, so the
@@ -1640,6 +1667,15 @@ pub const Game = struct {
         const dist = m.pos.manhattan(g.hero);
         if (hidden) {
             if (g.rng.uintLessThan(u8, 100) < wander_chance) g.wander(m);
+        } else if (m.kind == .thief and m.gold > 0) {
+            g.moveMonsterAway(m, g.hero); // runs away with the gold
+        } else if (dist == 1 and m.kind == .thief and g.inventory.gold > 0) {
+            const amount = @min(thief_steal, g.inventory.gold);
+            g.inventory.gold -= amount;
+            m.gold = amount;
+            g.stolen += amount;
+            g.events.stolen = true;
+            g.message = "The thief steals your gold!"; // render() adds "(-N gold)"
         } else if (dist == 1) {
             const dmg = m.kind.damage();
             g.hp -= dmg;
@@ -1676,6 +1712,23 @@ pub const Game = struct {
     /// A tile a monster may step on: no wall, no other monster, not the hero.
     fn isFreeForMonster(g: *const Game, p: Pos) bool {
         return g.tileAt(p) != .wall and g.monsterAt(p) == null and !p.eql(g.hero);
+    }
+
+    /// Steps to the free tile next to `m` that is farthest from `from`, if
+    /// that gets it farther away; otherwise stays put.
+    fn moveMonsterAway(g: *Game, m: *Monster, from: Pos) void {
+        var best = m.pos;
+        var best_dist = m.pos.manhattan(from);
+        for (directions) |d| {
+            const next = m.pos.add(d);
+            if (!g.isFreeForMonster(next)) continue;
+            const dist = next.manhattan(from);
+            if (dist > best_dist) {
+                best = next;
+                best_dist = dist;
+            }
+        }
+        m.pos = best;
     }
 
     fn moveMonsterToward(g: *Game, m: *Monster, goal: Pos) void {
@@ -1841,6 +1894,16 @@ pub const Game = struct {
         if (g.sneak_damage > 0) {
             if (opts.color) try w.writeAll(ansi_yellow);
             try w.print(" (sneak attack: {d} damage)", .{g.sneak_damage});
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
+        if (g.stolen > 0) {
+            if (opts.color) try w.writeAll(ansi_red);
+            try w.print(" (-{d} gold)", .{g.stolen});
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
+        if (g.recovered > 0) {
+            if (opts.color) try w.writeAll(ansi_green);
+            try w.print(" (+{d} gold back)", .{g.recovered});
             if (opts.color) try w.writeAll(ansi_reset);
         }
         if (g.shop_bought) |p| {
@@ -4845,6 +4908,67 @@ test "a slime with little room shrinks into one small slime" {
     }
     try testing.expectEqual(@as(usize, 1), smalls);
     try testing.expectEqualStrings("The slime shrinks into a small slime!", g.message);
+}
+
+// A thief next to the hero in a long corridor, with room to run away.
+const thief_layout: Layout = &.{
+    "##############################",
+    "#@T..........................#",
+    "##############################",
+};
+
+test "a thief steals 25 gold and runs away" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, thief_layout);
+    g.level = 4;
+    g.inventory.gold = 60;
+    g.step(.wait);
+    try testing.expectEqual(@as(u32, 35), g.inventory.gold);
+    try testing.expectEqual(@as(u32, 25), g.monsters[0].gold);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp); // it steals instead of biting
+    try testing.expect(g.events.stolen);
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "The thief steals your gold! (-25 gold)") != null);
+    // Then it runs away, one tile per round, and never steals again.
+    for (0..5) |_| g.step(.wait);
+    try testing.expectEqual(@as(i32, 2 + 5), g.monsters[0].pos.x);
+    try testing.expectEqual(@as(u32, 35), g.inventory.gold);
+}
+
+test "a thief steals all the gold when the hero has less than 25" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, thief_layout);
+    g.inventory.gold = 10;
+    g.step(.wait);
+    try testing.expectEqual(@as(u32, 0), g.inventory.gold);
+    try testing.expectEqual(@as(u32, 10), g.monsters[0].gold);
+}
+
+test "killing a thief gives the gold back" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, thief_layout);
+    g.inventory.gold = 60;
+    g.step(.wait); // stolen: 25
+    g.monsters[0].pos.x = 2; // caught again
+    g.monsters[0].hp = 1;
+    g.step(.right);
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+    try testing.expectEqual(@as(u32, 60), g.inventory.gold);
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "(+25 gold back)") != null);
+}
+
+test "a thief with nothing to steal bites" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, thief_layout);
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp - monster_damage), g.hp);
+    try testing.expectEqualStrings("The thief stabs you!", g.message);
+}
+
+test "a thief chases from 5 tiles away" {
+    try testing.expect(alwaysChasesFrom(.thief, 5));
+    try testing.expect(!alwaysChasesFrom(.thief, 6));
 }
 
 test "every kind wanders while the hero is invisible" {
