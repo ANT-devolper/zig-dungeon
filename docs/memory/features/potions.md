@@ -1,8 +1,10 @@
 # Chests and potions
 
-Code: `Potion` (`heal`, `strength`, `fromRoll`, `strengthFromRoll`, `label`, `price`), `Game.randomPotion`, the `.chest` branch of `Game.step`, `Game.drink`, the `*_chance` and `*_turns` constants in `src/root.zig`.
+Code: `Potion` (`heal`, `strength`, `fromRoll`, `strengthFromRoll`, `label`, `price`), `Game.randomPotion`, `Game.openChest` (one chest roll into the inventory, returns a `ChestLoot`), the `.chest` branch of `Game.step`, `Game.drink`, the `*_chance` and `*_turns` constants in `src/root.zig`.
 
 ## What a chest holds
+
+`openChest` is also used by the clear reward (chest rolls for killing every monster on a level, see [monsters.md](monsters.md)).
 
 A chest (25% of item spots, see [levels.md](levels.md)) holds **a potion or gold, never both** (a user rule). Rolled when it is opened:
 

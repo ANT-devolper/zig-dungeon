@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-16
 
-- `(this commit)` feat: add a panic key that hides the game behind a fake test run. The disguise is a `python -m pytest -v` run in `C:\Users\dev\projects\gestao-qualidade`. Space on any screen shows `renderDisguise`; only Space returns. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
+- `(this commit)` feat: reward chest rolls for killing every monster on a level. `openChest` now holds the chest roll; `giveClearReward` rolls `rewardChests(level)` of them on the last kill. ([monsters](features/monsters.md), [potions](features/potions.md), [sound](features/sound.md))
+- `30859f8` feat: add a panic key that hides the game behind a fake test run. The disguise is a `python -m pytest -v` run in `C:\Users\dev\projects\gestao-qualidade`. Space on any screen shows `renderDisguise`; only Space returns. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
 - `ccdfbdc` feat: move the hero with the arrow keys as well as wasd. `readKey` moved to `src/root.zig` and decodes arrow escape sequences; Windows raw mode turns on VT input. ([input-terminal](features/input-terminal.md))
 
 ## 2026-11-13

@@ -346,6 +346,8 @@ pub const State = enum { playing, lost, quit };
 pub const Events = struct {
     gold: bool = false,
     chest: bool = false,
+    /// The clear reward was given (the last monster of the level died).
+    reward: bool = false,
     drink: bool = false,
     time_stop: bool = false,
     speed: bool = false,
@@ -456,6 +458,16 @@ fn cellTile(c: Pos) Pos {
     return .{ .x = 2 * c.x + 1, .y = 2 * c.y + 1 };
 }
 
+/// What one chest roll gives: a potion or gold, never both.
+pub const ChestLoot = union(enum) { potion: Potion, gold: u32 };
+
+/// Chest rolls the hero gets for killing every monster on level `level`:
+/// one per monster HP tier (the same `monster_hp_step` as `monsterHp`),
+/// so 1 on levels 1-3, 2 on 4-6, 3 on 7-9... with no cap.
+pub fn rewardChests(level: u32) u32 {
+    return (level - 1) / monster_hp_step + 1;
+}
+
 pub const Game = struct {
     map: [H][W]Tile = undefined,
     hero: Pos = .{ .x = 1, .y = 1 },
@@ -476,6 +488,12 @@ pub const Game = struct {
     chest_gold: u32 = 0,
     /// Potion found in that chest, if any.
     chest_potion: ?Potion = null,
+    /// Chest rolls given during the last turn for killing the last monster
+    /// of the level (0 if none), and what they held: potion counts by
+    /// `Potion.index()` and the total gold.
+    reward_chests: u32 = 0,
+    reward_potions: [Potion.count]u32 = @splat(0),
+    reward_gold: u32 = 0,
     /// HP restored by a potion during the last turn (0 if none).
     healed: i32 = 0,
     /// Free turns left with the monsters frozen by a time stop potion.
@@ -606,6 +624,31 @@ pub const Game = struct {
         g.shop_bought = p;
         g.events.buy = true;
         g.message = "You bought it!";
+    }
+
+    /// Rolls one chest and puts what it holds in the inventory. A chest
+    /// holds either a potion or gold, never both. Chest tiles and the clear
+    /// reward use it.
+    fn openChest(g: *Game) ChestLoot {
+        if (g.rng.uintLessThan(u8, 100) < chest_potion_chance) {
+            const kind = g.randomPotion();
+            g.inventory.add(kind);
+            return .{ .potion = kind };
+        }
+        const gold = g.rng.intRangeAtMost(u32, chest_gold_min, chest_gold_max);
+        g.inventory.gold += gold;
+        return .{ .gold = gold };
+    }
+
+    /// The last monster of the level died: `rewardChests(level)` chest
+    /// rolls go straight to the inventory. render() lists them.
+    fn giveClearReward(g: *Game) void {
+        g.reward_chests = rewardChests(g.level);
+        for (0..g.reward_chests) |_| switch (g.openChest()) {
+            .potion => |kind| g.reward_potions[kind.index()] += 1,
+            .gold => |n| g.reward_gold += n,
+        };
+        g.events.reward = true;
     }
 
     /// Rolls a potion with the chest split (time stop, speed, strength,
@@ -887,6 +930,9 @@ pub const Game = struct {
         g.events = .{};
         g.chest_gold = 0;
         g.chest_potion = null;
+        g.reward_chests = 0;
+        g.reward_potions = @splat(0);
+        g.reward_gold = 0;
         g.healed = 0;
         g.shop_bought = null;
         g.shop_refused = null;
@@ -927,10 +973,13 @@ pub const Game = struct {
                     if (g.monsters[i].hp <= 0) {
                         g.removeMonster(i);
                         g.hit_killed = true;
-                        g.message = if (g.stairsRevealed())
-                            "You defeated the last monster! The stairs are revealed."
-                        else
-                            "You defeated a monster!";
+                        if (g.stairsRevealed()) {
+                            g.giveClearReward();
+                            // render() appends the reward.
+                            g.message = "You defeated the last monster! The stairs are revealed.";
+                        } else {
+                            g.message = "You defeated a monster!";
+                        }
                     } else {
                         g.message = "You hit the monster.";
                     }
@@ -953,14 +1002,9 @@ pub const Game = struct {
                     .chest => {
                         g.hero = target;
                         g.events.chest = true;
-                        // A chest holds either a potion or gold, never both.
-                        if (g.rng.uintLessThan(u8, 100) < chest_potion_chance) {
-                            const kind = g.randomPotion();
-                            g.inventory.add(kind);
-                            g.chest_potion = kind;
-                        } else {
-                            g.chest_gold = g.rng.intRangeAtMost(u32, chest_gold_min, chest_gold_max);
-                            g.inventory.gold += g.chest_gold;
+                        switch (g.openChest()) {
+                            .potion => |kind| g.chest_potion = kind,
+                            .gold => |n| g.chest_gold = n,
                         }
                         g.setTile(target, .floor);
                         // render() appends what was inside: "(+N gold)" or "(small potion)".
@@ -1378,6 +1422,7 @@ pub const Game = struct {
             }
             if (opts.color) try w.writeAll(ansi_reset);
         }
+        if (g.reward_chests > 0) try g.writeReward(w, opts.color);
         if (g.healed > 0) {
             if (opts.color) {
                 try w.print(" {s}(+{d} HP){s}", .{ ansi_green, g.healed, ansi_reset });
@@ -1396,6 +1441,24 @@ pub const Game = struct {
         if (g.state == .playing) {
             try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [q] quit\n");
         }
+    }
+
+    /// The clear reward after the kill message, e.g.
+    /// " (reward: 2 chests: speed, small potion x2, +30 gold)".
+    fn writeReward(g: *const Game, w: *std.Io.Writer, color: bool) std.Io.Writer.Error!void {
+        if (color) try w.writeAll(ansi_green);
+        try w.print(" (reward: {d} chest{s}:", .{ g.reward_chests, if (g.reward_chests == 1) "" else "s" });
+        var first = true;
+        for (std.enums.values(Potion)) |p| {
+            const n = g.reward_potions[p.index()];
+            if (n == 0) continue;
+            try w.print("{s} {s}", .{ if (first) "" else ",", p.label() });
+            if (n > 1) try w.print(" x{d}", .{n});
+            first = false;
+        }
+        if (g.reward_gold > 0) try w.print("{s} +{d} gold", .{ if (first) "" else ",", g.reward_gold });
+        try w.writeByte(')');
+        if (color) try w.writeAll(ansi_reset);
     }
 
     /// The shop's line under the map: what is left and the prices.
@@ -3046,6 +3109,137 @@ test "killing the last monster says the stairs are revealed" {
     g.monsters[0].pos = g.hero.add(.{ .x = 0, .y = 1 });
     g.step(.down);
     try testing.expectEqualStrings("You defeated the last monster! The stairs are revealed.", g.message);
+}
+
+// One monster next to the hero, for the clear reward tests.
+const reward_layout: Layout = &.{
+    "##############################",
+    "#@M.........................>#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "#............................#",
+    "##############################",
+};
+
+/// Sum of the potions in the clear reward.
+fn rewardPotionCount(g: *const Game) u32 {
+    var n: u32 = 0;
+    for (g.reward_potions) |c| n += c;
+    return n;
+}
+
+/// Sum of all the potions in the inventory.
+fn inventoryPotionCount(g: *const Game) u32 {
+    var n: u32 = 0;
+    for (g.inventory.potions) |c| n += c;
+    return n;
+}
+
+test "the clear reward grows by one chest every 3 levels" {
+    const expected = [_]u32{ 1, 1, 1, 2, 2, 2, 3, 3, 3, 4 };
+    for (expected, 1..) |e, level| try testing.expectEqual(e, rewardChests(@intCast(level)));
+}
+
+test "killing the last monster gives a chest reward straight to the inventory" {
+    var seed: u64 = 0;
+    while (seed < 200) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, reward_layout);
+        g.monsters[0].hp = 1;
+        g.inventory.gold = 5;
+        g.step(.right);
+        try testing.expectEqual(@as(usize, 0), g.monster_count);
+        try testing.expect(g.events.reward);
+        try testing.expectEqual(@as(u32, 1), g.reward_chests);
+        // One chest roll: a potion or 20-50 gold, never both.
+        const potions = rewardPotionCount(&g);
+        if (potions == 1) {
+            try testing.expectEqual(@as(u32, 0), g.reward_gold);
+        } else {
+            try testing.expectEqual(@as(u32, 0), potions);
+            try testing.expect(g.reward_gold >= chest_gold_min and g.reward_gold <= chest_gold_max);
+        }
+        // Straight to the inventory.
+        try testing.expectEqual(potions, inventoryPotionCount(&g));
+        try testing.expectEqual(5 + g.reward_gold, g.inventory.gold);
+        for (std.enums.values(Potion)) |p| {
+            try testing.expectEqual(g.reward_potions[p.index()], g.inventory.potionCount(p));
+        }
+        // Not a chest tile: no chest message state.
+        try testing.expect(!g.events.chest);
+    }
+}
+
+test "the clear reward rolls one chest per monster HP tier" {
+    var prng = std.Random.DefaultPrng.init(3);
+    var g = testGame(&prng, reward_layout);
+    g.level = 7; // monsters have 5 HP: 3 chest rolls
+    g.monsters[0].hp = 1;
+    g.step(.right);
+    try testing.expectEqual(@as(u32, 3), g.reward_chests);
+    // Each roll is a potion or 20-50 gold.
+    const potions = rewardPotionCount(&g);
+    try testing.expect(potions <= 3);
+    const gold_rolls = 3 - potions;
+    try testing.expect(g.reward_gold >= gold_rolls * chest_gold_min and g.reward_gold <= gold_rolls * chest_gold_max);
+    try testing.expectEqual(potions, inventoryPotionCount(&g));
+    try testing.expectEqual(g.reward_gold, g.inventory.gold);
+}
+
+test "killing a monster that is not the last gives no reward" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, reward_layout);
+    g.addMonster(.{ .x = 28, .y = 10 }); // far away
+    g.monsters[0].hp = 1;
+    g.step(.right);
+    try testing.expectEqualStrings("You defeated a monster!", g.message);
+    try testing.expect(!g.events.reward);
+    try testing.expectEqual(@as(u32, 0), g.reward_chests);
+    try testing.expectEqual(@as(u32, 0), inventoryPotionCount(&g));
+    try testing.expectEqual(@as(u32, 0), g.inventory.gold);
+}
+
+test "the clear reward is shown after the kill message and cleared next turn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, reward_layout);
+    g.level = 4; // 2 chest rolls
+    g.monsters[0].hp = 1;
+    g.step(.right);
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "The stairs are revealed. (reward: 2 chests:") != null);
+    for (std.enums.values(Potion)) |p| {
+        if (g.reward_potions[p.index()] > 0) try testing.expect(std.mem.indexOf(u8, out, p.label()) != null);
+    }
+    if (g.reward_gold > 0) {
+        var expected: [32]u8 = undefined;
+        const gold = try std.fmt.bufPrint(&expected, "+{d} gold)", .{g.reward_gold});
+        try testing.expect(std.mem.indexOf(u8, out, gold) != null);
+    }
+
+    // Next turn, the reward state is cleared.
+    g.step(.wait);
+    try testing.expectEqual(@as(u32, 0), g.reward_chests);
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "reward") == null);
+}
+
+test "the clear reward lists repeated potions with a count" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, reward_layout);
+    g.reward_chests = 3;
+    g.reward_potions[Potion.speed.index()] = 2;
+    g.reward_gold = 30;
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    var expected: [64]u8 = undefined;
+    const text = try std.fmt.bufPrint(&expected, "(reward: 3 chests: {s} x2, +30 gold)", .{Potion.speed.label()});
+    try testing.expect(std.mem.indexOf(u8, out, text) != null);
 }
 
 test "fov color render dims tiles out of sight" {

@@ -227,7 +227,7 @@ fn drawFrame(out: *Io.Writer, game: *const brewdungeon.Game, opts: brewdungeon.R
 /// Plays the sounds and animations for what happened during the last turn.
 fn afterTurn(io: Io, out: *Io.Writer, game: *const brewdungeon.Game) !void {
     if (game.events.gold) playSfx(.gold);
-    if (game.events.chest) playSfx(.chest);
+    if (game.events.chest or game.events.reward) playSfx(.chest);
     if (game.events.drink) playSfx(.drink);
     if (game.events.time_stop) playSfx(.time_stop);
     if (game.events.speed) playSfx(.speed);
