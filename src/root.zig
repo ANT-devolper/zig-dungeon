@@ -1489,6 +1489,55 @@ pub const Game = struct {
     }
 };
 
+// ---------------------------------------------------------- panic button
+
+/// The panic key: on any screen it hides the game behind `renderDisguise`,
+/// and only this key brings the game back.
+pub const panic_key = ' ';
+
+/// The fake prompt of the disguise: a made-up user and project.
+const disguise_prompt = "PS C:\\Users\\dev\\projects\\gestao-qualidade> ";
+
+/// Draws the panic screen: a PowerShell window that just ran a Python test
+/// suite with `python -m pytest -v`. Plain text (no colors) and nothing
+/// from the game. Ends on the prompt with no newline, so the cursor sits
+/// after it.
+pub fn renderDisguise(w: *std.Io.Writer) std.Io.Writer.Error!void {
+    try w.writeAll(disguise_prompt ++ "git pull\n" ++
+        \\Already up to date.
+        \\
+    ++ disguise_prompt ++ "python -m pytest -v\n" ++
+        \\============================= test session starts ==============================
+        \\platform win32 -- Python 3.12.4, pytest-8.3.2, pluggy-1.5.0 -- C:\Users\dev\projects\gestao-qualidade\.venv\Scripts\python.exe
+        \\cachedir: .pytest_cache
+        \\rootdir: C:\Users\dev\projects\gestao-qualidade
+        \\configfile: pyproject.toml
+        \\collected 18 items
+        \\
+        \\tests/test_inspecao.py::test_cria_inspecao_com_lote_valido PASSED         [  5%]
+        \\tests/test_inspecao.py::test_rejeita_lote_sem_numero PASSED               [ 11%]
+        \\tests/test_inspecao.py::test_inspecao_aprovada_fecha_lote PASSED          [ 16%]
+        \\tests/test_inspecao.py::test_inspecao_reprovada_abre_nc PASSED            [ 22%]
+        \\tests/test_nao_conformidade.py::test_nc_exige_causa_raiz PASSED           [ 27%]
+        \\tests/test_nao_conformidade.py::test_nc_com_acao_corretiva_encerra PASSED [ 33%]
+        \\tests/test_nao_conformidade.py::test_nc_vencida_aparece_no_painel PASSED  [ 38%]
+        \\tests/test_nao_conformidade.py::test_prazo_padrao_e_trinta_dias PASSED    [ 44%]
+        \\tests/test_plano_amostragem.py::test_tamanho_amostra_nivel_ii PASSED      [ 50%]
+        \\tests/test_plano_amostragem.py::test_criterio_aceitacao_por_aql PASSED    [ 55%]
+        \\tests/test_plano_amostragem.py::test_amostra_minima_lote_pequeno PASSED   [ 61%]
+        \\tests/test_relatorios.py::test_indice_de_rejeicao_por_fornecedor PASSED   [ 66%]
+        \\tests/test_relatorios.py::test_exporta_relatorio_csv PASSED               [ 72%]
+        \\tests/test_relatorios.py::test_relatorio_vazio_sem_inspecoes PASSED       [ 77%]
+        \\tests/test_calibracao.py::test_instrumento_vencido_bloqueia PASSED        [ 83%]
+        \\tests/test_calibracao.py::test_proxima_calibracao_no_intervalo PASSED     [ 88%]
+        \\tests/test_calibracao.py::test_certificado_obrigatorio PASSED             [ 94%]
+        \\tests/test_calibracao.py::test_historico_de_calibracoes PASSED            [100%]
+        \\
+        \\============================== 18 passed in 1.37s ==============================
+        \\
+    ++ disguise_prompt);
+}
+
 // ---------------------------------------------------------- title screen
 
 pub const TitleChoice = enum { play, quit };
@@ -1702,6 +1751,38 @@ test "arrow keys move the cursor on the title screen" {
     try testing.expectEqual(TitleChoice.quit, t.selected);
     for (try readAllKeys("\x1b[A", &buf)) |k| _ = t.key(k);
     try testing.expectEqual(TitleChoice.play, t.selected);
+}
+
+test "the disguise looks like pytest running in PowerShell" {
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try renderDisguise(&w);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "gestao-qualidade> python -m pytest -v\n") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "test session starts") != null);
+    try testing.expect(std.mem.indexOf(u8, out, " 18 passed in ") != null);
+    try testing.expectEqual(@as(usize, 18), std.mem.count(u8, out, " PASSED "));
+    try testing.expect(std.mem.startsWith(u8, out, "PS C:\\Users\\dev\\projects\\gestao-qualidade> "));
+    try testing.expect(std.mem.endsWith(u8, out, "\nPS C:\\Users\\dev\\projects\\gestao-qualidade> "));
+}
+
+test "the disguise shows nothing from the game" {
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try renderDisguise(&w);
+    const out = w.buffered();
+    for ([_][]const u8{ "DUNGEON", "HP", "@", "Gold", "gold", "Level", "#####" }) |word| {
+        try testing.expect(std.mem.indexOf(u8, out, word) == null);
+    }
+    for (out) |c| try testing.expect(c == '\n' or (c >= ' ' and c <= '~'));
+}
+
+test "space is the panic key, not a game command" {
+    try testing.expectEqual(@as(u8, ' '), panic_key);
+    try testing.expectEqual(@as(?Command, null), parseCommand(&.{panic_key}));
+    var t: Title = .{ .selected = .quit };
+    try testing.expectEqual(@as(?TitleChoice, null), t.key(panic_key));
+    try testing.expectEqual(TitleChoice.quit, t.selected);
 }
 
 test "a single key acts at once, so the screens never ask for Enter" {

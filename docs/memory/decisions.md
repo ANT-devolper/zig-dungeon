@@ -4,6 +4,7 @@ Rules and choices the user made. Newest first. Check here before changing a beha
 
 | Date | Decision | Why / context | Where |
 |---|---|---|---|
+| 2026-11-16 | Panic button on Space: on every screen (map, inventory, title, end of run) it shows a fake PowerShell `python -m pytest -v` run in `C:\Users\dev\projects\gestao-qualidade` (ONLY PRETENDS); only Space brings the game back; closing from it prints nothing from the game. | User request and choices (a test run over source code or git log; the user then picked the path and pytest over a zig build). | `panic_key`, `renderDisguise`, `panicScreen`, [features/input-terminal.md](features/input-terminal.md) |
 | 2026-11-16 | The arrow keys move the hero like WASD (and move the title cursor). Other escape sequences are ignored. | User request. | `readKey`, `term.zig`, [features/input-terminal.md](features/input-terminal.md) |
 | 2026-11-13 | The title screen is small and fits the map's width (31 columns + indent), with the name in a wall frame. | User request (the first banner was 68 columns wide). | `Title.render` |
 | 2026-11-13 | A title screen with Play and Quit (`w`/`s` + Enter, or `p`/`q`). After a run, any key returns to the title; Ctrl+C closes the game. `--no-title` skips the title. | User request and choices. | `Title`, `main.zig`, [features/input-terminal.md](features/input-terminal.md) |

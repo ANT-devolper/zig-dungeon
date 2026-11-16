@@ -8,6 +8,9 @@ const term = @import("term.zig");
 /// sounds play asynchronously straight from these buffers.
 var bank: sound.Bank = undefined;
 var muted = false;
+/// Set when the game closes from the panic screen: nothing from the game is
+/// printed on exit, so the disguise holds.
+var closed_hidden = false;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -56,6 +59,10 @@ pub fn main(init: std.process.Init) !void {
             try drawTitle(out, &title, last);
             const key = try readKey(in) orelse break; // EOF
             if (key == ctrl_c) break;
+            if (key == brewdungeon.panic_key) {
+                if (try panicScreen(in, out)) break;
+                continue;
+            }
             const choice = title.key(key) orelse continue;
             if (choice == .quit) break;
 
@@ -65,12 +72,16 @@ pub fn main(init: std.process.Init) !void {
             if (exit) break;
 
             // The run is over: its last frame stays until a key, then the
-            // title comes back.
-            try drawFrame(out, &game, .{ .color = true });
-            try out.writeAll("\nPress any key to return to the title.\n");
-            try out.flush();
+            // title comes back. The panic key hides it and waits again.
             if (game.state == .lost) playSfx(.lost);
-            const any = try readKey(in) orelse break;
+            const any = while (true) {
+                try drawFrame(out, &game, .{ .color = true });
+                try out.writeAll("\nPress any key to return to the title.\n");
+                try out.flush();
+                const k = try readKey(in) orelse break ctrl_c;
+                if (k != brewdungeon.panic_key) break k;
+                if (try panicScreen(in, out)) break ctrl_c;
+            };
             if (any == ctrl_c) break;
             title = .{};
         }
@@ -80,6 +91,7 @@ pub fn main(init: std.process.Init) !void {
     // the result stays visible after the game exits. No clear here: the
     // terminal's earlier text stays where it was.
     try leaveScreen(out);
+    if (closed_hidden) return; // closed from the panic screen: show nothing
     const game = last orelse return; // quit from the title without playing
     try game.render(out, .{ .color = true, .fov = true });
     try out.print("\nFinal score: reached level {d} with {d} gold.\n", .{ game.level, game.inventory.gold });
@@ -100,7 +112,15 @@ fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bo
         try drawFrame(out, game, .{ .color = true });
 
         const key = try readKey(in) orelse return true; // EOF (Ctrl+Z / end of file)
-        // Enter, space and tab do nothing on the map.
+        // The panic key hides the game; no turn is used.
+        if (key == brewdungeon.panic_key) {
+            if (try panicScreen(in, out)) {
+                game.step(.quit);
+                return true;
+            }
+            continue;
+        }
+        // Enter and tab do nothing on the map.
         if (std.ascii.isWhitespace(key)) continue;
         // Ctrl+C closes the game through the normal path, so the terminal
         // is restored.
@@ -112,10 +132,18 @@ fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bo
             if (cmd == .inventory) {
                 // A pause screen: looking uses no turn. A number uses that item
                 // (which does use a turn); any other key just closes it.
-                try out.writeAll("\x1b[2J\x1b[H");
-                try game.renderInventory(out, true);
-                try out.flush();
-                const choice = try readKey(in) orelse return true;
+                // The panic key hides it and comes back to it.
+                const choice = while (true) {
+                    try out.writeAll("\x1b[2J\x1b[H");
+                    try game.renderInventory(out, true);
+                    try out.flush();
+                    const k = try readKey(in) orelse return true;
+                    if (k != brewdungeon.panic_key) break k;
+                    if (try panicScreen(in, out)) {
+                        game.step(.quit);
+                        return true;
+                    }
+                };
                 if (choice == ctrl_c) {
                     game.step(.quit);
                     return true;
@@ -143,6 +171,29 @@ fn drawTitle(out: *Io.Writer, title: *const brewdungeon.Title, last: ?brewdungeo
     const run: ?brewdungeon.LastRun = if (last) |g| .{ .level = g.level, .gold = g.inventory.gold } else null;
     try title.render(out, true, run);
     try out.flush();
+}
+
+/// The panic button: hides the game behind a fake PowerShell pytest run
+/// (`renderDisguise`) with a visible cursor, until the panic key is pressed
+/// again; other keys do nothing. Returns true when the game must close
+/// (Ctrl+C or the end of the input), and then nothing from the game is
+/// printed on exit.
+fn panicScreen(in: *Io.Reader, out: *Io.Writer) !bool {
+    try out.writeAll("\x1b[2J\x1b[H");
+    try brewdungeon.renderDisguise(out);
+    try out.writeAll("\x1b[?25h"); // show the cursor, like a real prompt
+    try out.flush();
+    while (true) {
+        const key = try readKey(in) orelse 0x03;
+        if (key == ctrl_c) {
+            closed_hidden = true;
+            return true;
+        }
+        if (key == brewdungeon.panic_key) {
+            try out.writeAll("\x1b[?25l"); // hide it again for the game
+            return false;
+        }
+    }
 }
 
 /// Enters the alternate screen and hides the cursor (there is no prompt).

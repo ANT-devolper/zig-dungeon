@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-16
 
-- `(this commit)` feat: move the hero with the arrow keys as well as wasd. `readKey` moved to `src/root.zig` and decodes arrow escape sequences; Windows raw mode turns on VT input. ([input-terminal](features/input-terminal.md))
+- `(this commit)` feat: add a panic key that hides the game behind a fake test run. The disguise is a `python -m pytest -v` run in `C:\Users\dev\projects\gestao-qualidade`. Space on any screen shows `renderDisguise`; only Space returns. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
+- `ccdfbdc` feat: move the hero with the arrow keys as well as wasd. `readKey` moved to `src/root.zig` and decodes arrow escape sequences; Windows raw mode turns on VT input. ([input-terminal](features/input-terminal.md))
 
 ## 2026-11-13
 
