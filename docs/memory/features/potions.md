@@ -34,7 +34,7 @@ Colors (`Potion.color()`, used for the shop's `!` and the names on the inventory
 
 | Kind | Effect | Duration | Drinking again |
 |---|---|---|---|
-| `small/medium/large` | +1/+3/+5 HP (`heal()`), capped at `max_hp`, recorded in `Game.healed` | instant | - |
+| `small/medium/large` | +1/+3/+5 HP (`heal()`), capped at `Game.max_hp` (raised by offerings) through `Game.heal`, recorded in `Game.healed` | instant | - |
 | `time_stop` | monsters do not act (blue) | drink round + 3 (`time_stop_turns`) | resets to 3 |
 | `speed` | 2 actions per round, cyan hero background | 10 rounds = 20 actions incl. the drink (`speed_turns`) | resets to 10 |
 | `strength_small/medium/large` | +1/+2/+3 attack damage (`strength()`) | drink round + 3 (`strength_turns`) | **bonus adds up**, counter resets to 3 (a user rule) |
@@ -43,7 +43,7 @@ Colors (`Potion.color()`, used for the shop's `!` and the names on the inventory
 
 ## Mystery potion and curses (user rules)
 
-Its name is shown as just `???` everywhere (label, inventory line, shop, chest message; a user choice). `drinkMystery`: works at full health. Good result: `randomPotion` re-rolled until it is not a mystery, then `applyPotion`; `Game.mystery_potion` makes `render` append "(it was a <label>)". Bad result: one of the 5 `Curse` values, 20% each; `Game.mystery_curse` makes `render` append "(it was a curse)" and `events.curse` plays `Sfx.curse`. `applyCurse` sets:
+Its name is shown as just `???` everywhere (label, inventory line, shop, chest message; a user choice). `drinkMystery`: works at full health. Good result: `randomPotion` re-rolled until it is not a mystery, then `applyPotion`; `Game.mystery_potion` makes `render` append "(it was a <label>)". Bad result: one of the 5 `Curse` values, 20% each (`randomCurse`, also used by totems, see [fountains-totems.md](fountains-totems.md)); `Game.mystery_curse` makes `render` append "(it was a curse)" and `events.curse` plays `Sfx.curse`. `applyCurse` sets:
 
 | Curse | Effect | Duration | Header |
 |---|---|---|---|

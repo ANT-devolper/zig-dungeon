@@ -21,6 +21,7 @@ If a page and the code disagree, **the code wins**: fix the page in the same cha
 | Inventory, item numbers, `i` screen | [features/inventory.md](features/inventory.md) | `Inventory.add/remove`, `renderInventory`, `Command.use_N` |
 | Shop levels, prices, buying | [features/shop.md](features/shop.md) | `nextLevel`, `loadShop`, `buy`, `Potion.price` |
 | Chests and all potions | [features/potions.md](features/potions.md) | `Potion`, `drink`, `chest_*_chance` |
+| Fountain levels, offerings, totems, max HP | [features/fountains-totems.md](features/fountains-totems.md) | `loadFountain`, `makeOffering`, `touchTotem`, `spawnTotem`, `Game.max_hp` |
 | Rounds, timed effects, speed | [features/rounds.md](features/rounds.md) | `endRound`, `half_round`, `*_fresh` |
 | Keyboard input, terminal, alternate screen | [features/input-terminal.md](features/input-terminal.md) | `term.RawMode`, `readKey`, `alt_screen_on` |
 | Colors, frames, animations | [features/rendering.md](features/rendering.md) | `render`, `RenderOptions`, `writeHeader`, `playHitEffect` |

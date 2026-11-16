@@ -76,11 +76,14 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `>`    | stairs, your goal (yellow) |
 | `!`    | potion for sale in a shop: health green, strength brown, time stop yellow, vision purple, speed blue, mystery white |
 | `@`    | the shopkeeper (orange) |
+| `~`    | fountain: heals 5 HP once (blue) |
+| `+`    | offering at a fountain: 40 gold for +2 max HP (yellow) |
+| `Y`    | totem: a full heal or a curse (purple) |
 | `#`    | wall               |
 
 ### Rules
 
-- You start with **10 HP**.
+- You start with **10 HP**, which is also your max HP. Offerings at fountains raise the max (the header shows `HP current/max`).
 - Walk into a monster to attack it. Each hit deals 2 damage and monsters have 3 HP, so it takes two hits. A hit makes the monster blink with a `*`, or with an `X` when it dies.
 - You only see what is in your line of sight, up to 5 tiles away, and walls block your view. Outside it the maze is drawn in light gray, and monsters, gold and the stairs are hidden.
 - Defeat every monster on a level and the stairs are revealed: they show on the map from anywhere until you go down.
@@ -103,8 +106,10 @@ Press a key. It acts at once, with no need to press **Enter**:
   - **blind**: you see only 2 tiles away for the round you drink it and 5 more (`BLIND N`);
   - **confusion**: up/down and left/right are swapped for the round you drink it and 5 more (`CONFUSED N`).
 - **Effects combine.** With speed and time stop together, each frozen round lasts 2 of your actions, so `TIME STOP` only drops once for every 2 actions. Strength and vision work with all of them too, and with speed they last 2 actions per round.
-- Potions go to your inventory, which numbers items in the order you picked them up. When an item runs out, the ones below move up, so the numbers are always 1, 2, 3... Drinking uses a turn and never heals past 10 HP. Typing a number with no item, or drinking at full health, uses no turn.
-- **Shops.** Gold buys potions. On the stairs of every even level (2, 4, 6...) the next level may be a **shop**: 80% the first time, 50% every later time. Right after a shop, the next chance is skipped. A shop counts as a level. It is one lit room with the shopkeeper (an orange `@`), 2 potions on the floor (`!`, rolled like a chest's potion) and the stairs. Walk over a potion to buy it; without enough gold it stays there. Prices follow rarity:
+- Potions go to your inventory, which numbers items in the order you picked them up. When an item runs out, the ones below move up, so the numbers are always 1, 2, 3... Drinking uses a turn and never heals past your max HP. Typing a number with no item, or drinking at full health, uses no turn.
+- **Totems.** About 1 level in 10 hides a **totem** (`Y`) in place of gold or a chest, never on two levels in a row. Walk over it and it disappears: 60% of the time it heals you completely, 40% of the time it casts one of the five curses below. It works at full health.
+- **Fountains.** Sometimes the next level is a **fountain** instead of a shop (30% of the times a shop would show up; see Shops below). It is a lit room with the fountain (`~`), an offering (`+`) and the stairs, and it counts as a level. Bump the fountain to heal **5 HP**, for free, once (not at full health: then it waits for you). Walk over the offering to pay **40 gold** for **+2 max HP** (and the 2 new HP), once; without enough gold it stays there.
+- **Shops.** Gold buys potions. On the stairs of every even level (2, 4, 6...) the next level may be a **shop** (or a fountain, 3 times in 10): 80% the first time, 50% every later time. Right after a shop or a fountain, the next chance is skipped. A shop counts as a level. It is one lit room with the shopkeeper (an orange `@`), 2 potions on the floor (`!`, rolled like a chest's potion) and the stairs. Walk over a potion to buy it; without enough gold it stays there. Prices follow rarity:
 
   | Potion | Price |
   |---|---|

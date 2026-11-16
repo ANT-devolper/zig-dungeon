@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-16
 
-- `(this commit)` docs: plan new monsters, sneak attacks, level-up perks and altars. Added them as a to-do list of next steps, plus the unusable 10th inventory slot as a known issue. ([backlog](backlog.md))
+- `(this commit)` feat: add fountain levels with offerings, and totems. A fountain replaces 30% of shops: free +5 HP once, and 40 gold for +2 max HP. A totem may replace a loot spot (10%, never two levels in a row): full heal or a curse. `max_hp` became `Game.max_hp` (`start_max_hp` is the old constant); all heals go through `Game.heal`; the curse roll moved to `randomCurse`. ([fountains-totems](features/fountains-totems.md) new, [shop](features/shop.md), [levels](features/levels.md), [potions](features/potions.md), [rendering](features/rendering.md), [backlog](backlog.md))
+- `0fe16e0` docs: plan new monsters, sneak attacks, level-up perks and altars. Added them as a to-do list of next steps, plus the unusable 10th inventory slot as a known issue. ([backlog](backlog.md))
 - `3e9fe1e` feat: reward chest rolls for killing every monster on a level. `openChest` now holds the chest roll; `giveClearReward` rolls `rewardChests(level)` of them on the last kill. ([monsters](features/monsters.md), [potions](features/potions.md), [sound](features/sound.md))
 - `30859f8` feat: add a panic key that hides the game behind a fake test run. The disguise is a `python -m pytest -v` run in `C:\Users\dev\projects\gestao-qualidade`. Space on any screen shows `renderDisguise`; only Space returns. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
 - `ccdfbdc` feat: move the hero with the arrow keys as well as wasd. `readKey` moved to `src/root.zig` and decodes arrow escape sequences; Windows raw mode turns on VT input. ([input-terminal](features/input-terminal.md))

@@ -6,7 +6,9 @@ pub const sound = @import("sound.zig");
 pub const W = 31;
 pub const H = 13;
 pub const max_monsters = 8;
-pub const max_hp = 10;
+/// The hero's max HP at the start of a run (offerings raise it, see
+/// `Game.max_hp`).
+pub const start_max_hp = 10;
 
 const hero_damage = 2;
 /// Monster HP on levels 1-3; they gain 1 HP every `monster_hp_step` levels.
@@ -54,6 +56,17 @@ const blind_radius = 2;
 const shop_first_chance = 80;
 /// Chance (in %) that the shop shows up on every later call.
 const shop_chance = 50;
+/// Chance (in %) that the shop event brings a fountain instead of a shop.
+const fountain_chance = 30;
+/// HP the fountain heals, once, for free.
+const fountain_heal = 5;
+/// Gold the fountain's offering costs, and the max HP it gives (once).
+const offering_price = 40;
+const offering_max_hp = 2;
+/// Chance (in %) that a maze level holds a totem (never two levels in a row).
+const totem_chance = 10;
+/// Chance (in %) that a totem heals completely; otherwise it curses.
+const totem_heal_chance = 60;
 
 /// Potion kinds the hero can carry: three sizes of health potion, three
 /// sizes of strength potion, plus the time stop, speed, vision and mystery
@@ -179,7 +192,19 @@ const chase_radius = 6;
 /// Chance (in %) that a monster that is not chasing takes a random step.
 const wander_chance = 30;
 
-pub const Tile = enum { wall, floor, gold, chest, stairs };
+pub const Tile = enum {
+    wall,
+    floor,
+    gold,
+    chest,
+    stairs,
+    /// Fountain level: heals `fountain_heal` once; it blocks like a wall.
+    fountain,
+    /// Fountain level: walking over it pays `offering_price` for max HP.
+    offering,
+    /// Maze level: walking over it heals completely or curses.
+    totem,
+};
 
 pub const Pos = struct {
     x: i32,
@@ -452,6 +477,10 @@ const shopkeeper_pos: Pos = .{ .x = 15, .y = 3 };
 const shop_item_pos = [2]Pos{ .{ .x = 12, .y = 6 }, .{ .x = 18, .y = 6 } };
 const shop_hero_start: Pos = .{ .x = 10, .y = 9 };
 const shop_stairs: Pos = .{ .x = 20, .y = 9 };
+// Fountain level: the same room, with the fountain in the middle and the
+// offering above it.
+const fountain_pos: Pos = .{ .x = 15, .y = 6 };
+const offering_pos: Pos = .{ .x = 15, .y = 4 };
 
 /// Map tile at the center of maze cell `c`.
 fn cellTile(c: Pos) Pos {
@@ -471,7 +500,9 @@ pub fn rewardChests(level: u32) u32 {
 pub const Game = struct {
     map: [H][W]Tile = undefined,
     hero: Pos = .{ .x = 1, .y = 1 },
-    hp: i32 = max_hp,
+    hp: i32 = start_max_hp,
+    /// Max HP: `start_max_hp`, raised by offerings at fountains.
+    max_hp: i32 = start_max_hp,
     inventory: Inventory = .{},
     level: u32 = 1,
     monsters: [max_monsters]Monster = undefined,
@@ -539,6 +570,17 @@ pub const Game = struct {
     shop_bought: ?Potion = null,
     /// Item the hero stepped on without enough gold during the last turn.
     shop_refused: ?Potion = null,
+    /// The current level is a fountain (see `loadFountain`).
+    in_fountain: bool = false,
+    /// The fountain already healed the hero (it heals once).
+    fountain_used: bool = false,
+    /// An offering was made during the last turn, or refused for lack of gold.
+    offering_made: bool = false,
+    offering_refused: bool = false,
+    /// The last level that held a totem (never two levels in a row).
+    last_totem_level: ?u32 = null,
+    /// The curse a totem gave during the last turn, if any.
+    totem_curse: ?Curse = null,
     events: Events = .{},
     rng: std.Random,
 
@@ -554,17 +596,39 @@ pub const Game = struct {
     pub fn loadLevel(g: *Game, n: u32) void {
         g.level = n;
         g.in_shop = false;
+        g.in_fountain = false;
         g.shop_items = @splat(null);
         g.generateLevel();
         g.spawnLoot();
+        g.spawnTotem();
         g.spawnMonsters(@min(max_monsters, 1 + n * 2));
     }
 
     /// Makes level `n` a shop: one lit room with the shopkeeper, two potions
     /// for sale (rolled like a chest's) and the stairs. No monsters, no loot.
     pub fn loadShop(g: *Game, n: u32) void {
-        g.level = n;
+        g.loadRoom(n);
         g.in_shop = true;
+        for (&g.shop_items) |*item| item.* = g.randomPotion();
+    }
+
+    /// Makes level `n` a fountain: the shop's lit room with a fountain that
+    /// heals once for free, an offering that sells max HP, and the stairs.
+    pub fn loadFountain(g: *Game, n: u32) void {
+        g.loadRoom(n);
+        g.in_fountain = true;
+        g.fountain_used = false;
+        g.setTile(fountain_pos, .fountain);
+        g.setTile(offering_pos, .offering);
+    }
+
+    /// The empty lit room shared by shops and fountains: the hero at the
+    /// bottom left, the stairs at the bottom right, no monsters, no loot.
+    fn loadRoom(g: *Game, n: u32) void {
+        g.level = n;
+        g.in_shop = false;
+        g.in_fountain = false;
+        g.shop_items = @splat(null);
         g.monster_count = 0;
         for (&g.map) |*row| @memset(row, .wall);
         var y: i32 = shop_room.y0;
@@ -574,26 +638,111 @@ pub const Game = struct {
         }
         g.hero = shop_hero_start;
         g.setTile(shop_stairs, .stairs);
-        for (&g.shop_items) |*item| item.* = g.randomPotion();
     }
 
-    /// Takes the stairs: the next level, or a shop. The shop event is called
-    /// on the stairs of every even level, unless a shop just showed up.
+    /// True on a shop or fountain level: one lit room, no monsters.
+    pub fn inRoom(g: *const Game) bool {
+        return g.in_shop or g.in_fountain;
+    }
+
+    /// Takes the stairs: the next level, a shop or a fountain. The event is
+    /// called on the stairs of every even level, unless one just showed up;
+    /// when it fires, it is a fountain `fountain_chance`% of the time.
     fn nextLevel(g: *Game) void {
         const n = g.level + 1;
-        if (g.in_shop or g.level % 2 != 0) return g.loadLevel(n);
+        if (g.inRoom() or g.level % 2 != 0) return g.loadLevel(n);
         if (g.shop_skip) {
-            g.shop_skip = false; // the chance after a shop is skipped
+            g.shop_skip = false; // the chance after a shop or fountain is skipped
             return g.loadLevel(n);
         }
         const chance: u8 = if (g.shop_calls == 0) shop_first_chance else shop_chance;
         g.shop_calls += 1;
         if (g.rng.uintLessThan(u8, 100) < chance) {
             g.shop_skip = true;
-            g.loadShop(n);
+            if (g.rng.uintLessThan(u8, 100) < fountain_chance) {
+                g.loadFountain(n);
+            } else {
+                g.loadShop(n);
+            }
         } else {
             g.loadLevel(n);
         }
+    }
+
+    /// The hero bumps the fountain: it heals `fountain_heal` once, and not
+    /// at full HP (then it stays for later).
+    fn useFountain(g: *Game) void {
+        if (g.fountain_used) {
+            g.message = "The fountain is dry.";
+        } else if (g.hp >= g.max_hp) {
+            g.message = "You are already at full health.";
+        } else {
+            g.heal(fountain_heal);
+            g.fountain_used = true;
+            g.events.drink = true;
+            g.message = "You drink from the fountain.";
+        }
+    }
+
+    /// The hero stands on the offering: with enough gold it raises max HP
+    /// (and heals the new points) and disappears.
+    fn makeOffering(g: *Game, p: Pos) void {
+        if (g.inventory.gold < offering_price) {
+            g.offering_refused = true;
+            g.message = "Not enough gold.";
+            return;
+        }
+        g.inventory.gold -= offering_price;
+        g.max_hp += offering_max_hp;
+        g.hp += offering_max_hp;
+        g.setTile(p, .floor);
+        g.offering_made = true;
+        g.events.buy = true;
+        g.message = "You make an offering. You feel tougher!";
+    }
+
+    /// The hero stands on a totem: it heals completely
+    /// (`totem_heal_chance`%) or casts a random curse, then disappears.
+    fn touchTotem(g: *Game, p: Pos) void {
+        g.setTile(p, .floor);
+        if (g.rng.uintLessThan(u8, 100) < totem_heal_chance) {
+            g.heal(g.max_hp);
+            g.events.drink = true;
+            g.message = "The totem glows. You are fully healed!";
+        } else {
+            const c = g.randomCurse();
+            g.totem_curse = c;
+            g.events.curse = true;
+            g.applyCurse(c); // sets the message; render() adds "(a totem curse)"
+        }
+    }
+
+    /// Heals up to `amount` HP, never past `max_hp`; records it in `healed`.
+    fn heal(g: *Game, amount: i32) void {
+        const before = g.hp;
+        g.hp = @min(g.max_hp, g.hp + amount);
+        g.healed = g.hp - before;
+    }
+
+    /// On a maze level, turns one loot spot into a totem `totem_chance`% of
+    /// the time, never on two levels in a row.
+    fn spawnTotem(g: *Game) void {
+        if (g.last_totem_level) |last| {
+            if (last + 1 == g.level) return;
+        }
+        if (g.rng.uintLessThan(u8, 100) >= totem_chance) return;
+        var spots: [loot_count]Pos = undefined;
+        var n: usize = 0;
+        for (0..H) |y| for (0..W) |x| switch (g.map[y][x]) {
+            .gold, .chest => if (n < spots.len) {
+                spots[n] = .{ .x = @intCast(x), .y = @intCast(y) };
+                n += 1;
+            },
+            else => {},
+        };
+        if (n == 0) return;
+        g.setTile(spots[g.rng.uintLessThan(usize, n)], .totem);
+        g.last_totem_level = g.level;
     }
 
     /// The shop item at `p`, if any (its index in `shop_items`).
@@ -860,6 +1009,9 @@ pub const Game = struct {
                     '>' => .stairs,
                     '$' => .gold,
                     '&' => .chest,
+                    '~' => .fountain,
+                    '+' => .offering,
+                    'Y' => .totem,
                     else => .floor,
                 };
                 switch (c) {
@@ -936,6 +1088,9 @@ pub const Game = struct {
         g.healed = 0;
         g.shop_bought = null;
         g.shop_refused = null;
+        g.offering_made = false;
+        g.offering_refused = false;
+        g.totem_curse = null;
         g.mystery_potion = null;
         g.mystery_curse = null;
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
@@ -987,6 +1142,15 @@ pub const Game = struct {
                     g.message = "The shopkeeper smiles. Walk over an item to buy it.";
                 } else switch (g.tileAt(target)) {
                     .wall => g.message = "A wall blocks the way.",
+                    .fountain => g.useFountain(),
+                    .offering => {
+                        g.hero = target;
+                        g.makeOffering(target);
+                    },
+                    .totem => {
+                        g.hero = target;
+                        g.touchTotem(target);
+                    },
                     .floor => {
                         g.hero = target;
                         g.message = "";
@@ -1016,6 +1180,8 @@ pub const Game = struct {
                         g.events.stairs = true;
                         g.message = if (g.in_shop)
                             "You found a shop! Walk over an item to buy it."
+                        else if (g.in_fountain)
+                            "You found a fountain! Drink from it, or make an offering (+)."
                         else
                             "You go down the stairs...";
                         g.half_round = false; // a new level starts a new round
@@ -1104,7 +1270,7 @@ pub const Game = struct {
     /// Drinks a potion the hero carries. Returns false (and uses no turn)
     /// when it is a health potion and the hero is already at full health.
     fn drink(g: *Game, kind: Potion) bool {
-        if (kind.heal() > 0 and g.hp >= max_hp) {
+        if (kind.heal() > 0 and g.hp >= g.max_hp) {
             g.message = "You are already at full health.";
             return false;
         }
@@ -1122,12 +1288,17 @@ pub const Game = struct {
             g.mystery_potion = p;
             g.applyPotion(p);
         } else {
-            const curses = std.enums.values(Curse);
-            const c = curses[g.rng.uintLessThan(usize, curses.len)];
+            const c = g.randomCurse();
             g.mystery_curse = c;
             g.events.curse = true;
             g.applyCurse(c);
         }
+    }
+
+    /// One of the curses, each just as likely (mystery potions and totems).
+    fn randomCurse(g: *Game) Curse {
+        const curses = std.enums.values(Curse);
+        return curses[g.rng.uintLessThan(usize, curses.len)];
     }
 
     /// The effect of a potion (already taken out of the inventory).
@@ -1162,9 +1333,7 @@ pub const Game = struct {
                 };
             },
             .small, .medium, .large => {
-                const before = g.hp;
-                g.hp = @min(max_hp, g.hp + kind.heal());
-                g.healed = g.hp - before;
+                g.heal(kind.heal());
                 g.events.drink = true;
                 // render() appends the HP restored: "(+N HP)".
                 g.message = switch (kind) {
@@ -1327,7 +1496,8 @@ pub const Game = struct {
         const hurt = g.damage_taken > 0;
         // A vision potion lifts the field of view: the whole map is drawn.
         // So does a shop: its room is lit.
-        const seen: ?[H][W]bool = if (opts.fov and !g.hasVision() and !g.in_shop) g.visibility() else null;
+        // So does a fountain level.
+        const seen: ?[H][W]bool = if (opts.fov and !g.hasVision() and !g.inRoom()) g.visibility() else null;
         try g.writeHeader(w);
         for (0..H) |y| {
             try w.splatByteAll(' ', opts.shake);
@@ -1383,6 +1553,18 @@ pub const Game = struct {
                         color = ansi_yellow; // the goal stands out
                         break :blk '>';
                     },
+                    .fountain => blk: {
+                        color = if (g.fountain_used) ansi_dim else ansi_blue;
+                        break :blk '~';
+                    },
+                    .offering => blk: {
+                        color = ansi_yellow;
+                        break :blk '+';
+                    },
+                    .totem => blk: {
+                        color = ansi_purple;
+                        break :blk 'Y';
+                    },
                 };
                 if (opts.color and !opts.flash and color != null) {
                     try w.print("{s}{c}{s}", .{ color.?, c, ansi_reset });
@@ -1412,6 +1594,19 @@ pub const Game = struct {
         }
         if (g.shop_refused) |p| {
             try w.print(" (the {s} costs {d} gold, you have {d})", .{ p.label(), p.price(), g.inventory.gold });
+        }
+        if (g.offering_made) {
+            if (opts.color) try w.writeAll(ansi_green);
+            try w.print(" (+{d} max HP, -{d} gold)", .{ offering_max_hp, offering_price });
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
+        if (g.offering_refused) {
+            try w.print(" (the offering costs {d} gold, you have {d})", .{ offering_price, g.inventory.gold });
+        }
+        if (g.totem_curse != null) {
+            if (opts.color) try w.writeAll(ansi_red);
+            try w.writeAll(" (a totem curse)");
+            if (opts.color) try w.writeAll(ansi_reset);
         }
         if (g.events.chest) {
             if (opts.color) try w.writeAll(ansi_green);
@@ -1477,7 +1672,11 @@ pub const Game = struct {
     /// Status line shared by the map and the inventory screen.
     fn writeHeader(g: *const Game, w: *std.Io.Writer) std.Io.Writer.Error!void {
         try w.print("DUNGEON  Level {d}{s}   HP {d}/{d}   Gold {d}", .{
-            g.level, if (g.in_shop) " (SHOP)" else "", g.hp, max_hp, g.inventory.gold,
+            g.level,
+            if (g.in_shop) " (SHOP)" else if (g.in_fountain) " (FOUNTAIN)" else "",
+            g.hp,
+            g.max_hp,
+            g.inventory.gold,
         });
         if (g.time_stop > 0) try w.print("   TIME STOP {d}", .{g.time_stop});
         if (g.speed > 0) try w.print("   SPEED {d}", .{g.speed});
@@ -1894,7 +2093,7 @@ test "adjacent monster bites the hero" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, test_layout);
     g.step(.wait);
-    try testing.expectEqual(@as(i32, max_hp - monster_damage), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp - monster_damage), g.hp);
 }
 
 test "nearby monster chases the hero" {
@@ -2035,14 +2234,14 @@ test "opening the inventory does not use a turn" {
     g.message = "before";
     const monster_before = g.monsters[0].pos;
     g.step(.inventory);
-    try testing.expectEqual(@as(i32, max_hp), g.hp); // the adjacent monster did not bite
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp); // the adjacent monster did not bite
     try testing.expectEqual(monster_before, g.monsters[0].pos);
     try testing.expectEqualStrings("before", g.message);
     try testing.expectEqual(Events{}, g.events);
     try testing.expectEqual(State.playing, g.state);
     // A real turn does let the monster bite.
     g.step(.wait);
-    try testing.expectEqual(@as(i32, max_hp - monster_damage), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp - monster_damage), g.hp);
 }
 
 test "inventory screen lists the gold" {
@@ -2158,7 +2357,7 @@ test "strength works at full health and shows its counter" {
     try testing.expectEqual(@as(u8, strength_turns), g.strength);
     try testing.expectEqual(@as(i32, hero_damage + 2), g.attackDamage());
     try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.strength_medium));
-    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "STRENGTH +2 (3)") != null);
 }
 
@@ -2325,7 +2524,7 @@ test "speed works at full health and shows its counter" {
     try testing.expectEqualStrings("You feel fast!", g.message);
     try testing.expectEqual(@as(u8, speed_turns), g.speed);
     try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.speed));
-    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
     var buf: [8192]u8 = undefined;
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "SPEED 10") != null);
 }
@@ -2335,13 +2534,13 @@ test "speed gives 2 actions per round for 10 rounds (20 actions)" {
     var g = testGame(&prng, test_layout); // a monster is next to the hero
     g.inventory.add(.speed);
     g.step(.use_1); // action 1: the first half of a round, nobody bites
-    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
 
     var bites: i32 = 0;
     for (2..21) |action| { // actions 2..20
-        g.hp = max_hp - 1; // keep the hero alive and comparable
+        g.hp = start_max_hp - 1; // keep the hero alive and comparable
         g.step(.wait);
-        const bitten = g.hp < max_hp - 1;
+        const bitten = g.hp < start_max_hp - 1;
         if (bitten) bites += 1;
         // The round closes (and the monster acts) only on even actions.
         try testing.expectEqual(action % 2 == 0, bitten);
@@ -2458,7 +2657,7 @@ test "time stop works at full health" {
     g.step(.use_1);
     try testing.expect(g.events.time_stop);
     try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(.time_stop));
-    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
 }
 
 test "frozen far-away monsters do not wander" {
@@ -2478,7 +2677,7 @@ test "the hero can hit a frozen monster, which does not strike back" {
     g.step(.use_1);
     g.step(.right); // attack the adjacent monster
     try testing.expectEqual(@as(i32, monster_hp - hero_damage), g.monsters[0].hp);
-    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
 }
 
 test "drinking time stop again resets the counter" {
@@ -2613,8 +2812,8 @@ test "drinking heals, caps at max HP and uses a turn" {
 
     g.hp = 8;
     g.step(.use_1);
-    try testing.expectEqual(@as(i32, 2), g.healed); // capped at max_hp
-    try testing.expectEqual(@as(i32, max_hp - monster_damage), g.hp);
+    try testing.expectEqual(@as(i32, 2), g.healed); // capped at start_max_hp
+    try testing.expectEqual(@as(i32, start_max_hp - monster_damage), g.hp);
 
     var buf: [4096]u8 = undefined;
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "(+2 HP)") != null);
@@ -2644,7 +2843,7 @@ test "drinking at full health keeps the potion and uses no turn" {
     g.step(.use_1);
     try testing.expectEqualStrings("You are already at full health.", g.message);
     try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.small));
-    try testing.expectEqual(@as(i32, max_hp), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
 }
 
 test "map help mentions the inventory key" {
@@ -2693,7 +2892,7 @@ fn expectValidLevel(g: *const Game) !void {
             const d = dist[y][x] orelse return error.StairsUnreachable;
             try testing.expect(d >= min_stairs_distance);
         },
-        .gold, .chest => loot += 1,
+        .gold, .chest, .totem => loot += 1,
         else => {},
     };
     try testing.expectEqual(@as(usize, 1), stairs_count);
@@ -3398,8 +3597,8 @@ test "shake shifts the map rows" {
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{ .shake = 2 }), "\n\n  " ++ row) != null);
 }
 
-/// Counts how often the stairs of level 2 lead to a shop over 1000 seeds,
-/// with the shop event already called `calls` times before.
+/// Counts how often the stairs of level 2 lead to the event (a shop or a
+/// fountain) over 1000 seeds, with the event already called `calls` times.
 fn countShops(calls: u32) usize {
     var shops: usize = 0;
     var seed: u64 = 0;
@@ -3409,7 +3608,7 @@ fn countShops(calls: u32) usize {
         g.level = 2;
         g.shop_calls = calls;
         g.step(.down); // the stairs
-        if (g.in_shop) shops += 1;
+        if (g.inRoom()) shops += 1;
     }
     return shops;
 }
@@ -3658,7 +3857,7 @@ test "the burning curse does 2 damage but never kills" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, pocket_layout);
     g.applyCurse(.burn);
-    try testing.expectEqual(@as(i32, max_hp - 2), g.hp);
+    try testing.expectEqual(@as(i32, start_max_hp - 2), g.hp);
     try testing.expectEqual(@as(i32, 2), g.damage_taken);
     g.hp = 2;
     g.damage_taken = 0;
@@ -3711,4 +3910,243 @@ test "the hero is red while cursed" {
     const out = try renderToBuf(&g, &buf, .{ .color = true });
     try testing.expect(std.mem.indexOf(u8, out, ansi_red ++ "@") != null);
     try testing.expect(std.mem.indexOf(u8, out, "CONFUSED 5") != null);
+}
+
+// Fountain and offering tests: the fountain to the left of the hero, the
+// offering to the right, then a totem.
+const fountain_layout: Layout = &.{
+    "########",
+    "#~@+Y..#",
+    "########",
+};
+
+const totem_layout: Layout = &.{
+    "####",
+    "#@Y#",
+    "####",
+};
+
+test "the event shows a shop 70% of the time and a fountain 30%" {
+    var shops: usize = 0;
+    var fountains: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 2000) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, test_layout);
+        g.level = 2;
+        g.step(.down); // the stairs
+        if (g.in_shop) shops += 1;
+        if (g.in_fountain) fountains += 1;
+        try testing.expect(!(g.in_shop and g.in_fountain));
+    }
+    const percent = fountains * 100 / (shops + fountains);
+    try testing.expect(percent >= 25 and percent <= 35);
+}
+
+test "a fountain counts as a level and skips the next chance" {
+    var seed: u64 = 0;
+    while (true) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, test_layout);
+        g.level = 2;
+        g.step(.down);
+        if (!g.in_fountain) continue;
+        try testing.expectEqual(@as(u32, 3), g.level);
+        try testing.expect(std.mem.indexOf(u8, g.message, "fountain") != null);
+        try testing.expect(g.shop_skip);
+        g.nextLevel(); // the fountain's stairs: level 4, no call
+        try testing.expect(!g.inRoom());
+        try testing.expectEqual(@as(u32, 4), g.level);
+        g.nextLevel(); // level 4's stairs: skipped, no roll
+        try testing.expect(!g.inRoom());
+        try testing.expectEqual(@as(u32, 1), g.shop_calls);
+        break;
+    }
+}
+
+test "a fountain room has the fountain, the offering and no monsters" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, test_layout);
+    g.loadFountain(3);
+    try testing.expect(g.in_fountain and !g.in_shop);
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+    try testing.expectEqual(Tile.fountain, g.tileAt(fountain_pos));
+    try testing.expectEqual(Tile.offering, g.tileAt(offering_pos));
+    try testing.expectEqual(Tile.stairs, g.tileAt(shop_stairs));
+    try testing.expect(g.hero.eql(shop_hero_start));
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .fov = true });
+    try testing.expect(std.mem.indexOf(u8, out, "Level 3 (FOUNTAIN)") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "~") != null); // the room is lit
+    try testing.expect(std.mem.indexOf(u8, out, "+") != null);
+}
+
+test "the fountain heals 5 HP once" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    const start = g.hero;
+    g.hp = 2;
+    g.step(.left);
+    try testing.expect(g.hero.eql(start)); // the fountain blocks
+    try testing.expectEqual(@as(i32, 7), g.hp);
+    try testing.expectEqual(@as(i32, 5), g.healed);
+    try testing.expect(g.events.drink);
+    g.step(.left);
+    try testing.expectEqual(@as(i32, 7), g.hp);
+    try testing.expectEqualStrings("The fountain is dry.", g.message);
+}
+
+test "the fountain heals at most up to max HP" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    g.hp = start_max_hp - 2;
+    g.step(.left);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
+    try testing.expectEqual(@as(i32, 2), g.healed);
+}
+
+test "the fountain does nothing at full health" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    g.step(.left);
+    try testing.expectEqualStrings("You are already at full health.", g.message);
+    try testing.expect(!g.fountain_used); // still there for later
+    g.hp = 4;
+    g.step(.left);
+    try testing.expectEqual(@as(i32, 9), g.hp);
+}
+
+test "the offering raises max HP by 2 for 40 gold" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    g.inventory.gold = 50;
+    g.hp = 6;
+    g.step(.right);
+    try testing.expectEqual(@as(u32, 10), g.inventory.gold);
+    try testing.expectEqual(@as(i32, start_max_hp + 2), g.max_hp);
+    try testing.expectEqual(@as(i32, 8), g.hp);
+    try testing.expectEqual(Tile.floor, g.tileAt(g.hero)); // used up
+    try testing.expect(g.events.buy);
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "(+2 max HP, -40 gold)") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "HP 8/12") != null);
+}
+
+test "the offering stays when the gold is not enough" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    g.inventory.gold = 30;
+    g.step(.right);
+    try testing.expectEqual(@as(u32, 30), g.inventory.gold);
+    try testing.expectEqual(@as(i32, start_max_hp), g.max_hp);
+    try testing.expectEqual(Tile.offering, g.tileAt(g.hero));
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "Not enough gold. (the offering costs 40 gold, you have 30)") != null);
+}
+
+test "health potions heal up to the raised max HP" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    g.max_hp = 12;
+    g.hp = 10;
+    g.inventory.add(.large);
+    g.step(.use_1);
+    try testing.expectEqual(@as(i32, 12), g.hp);
+    try testing.expectEqual(@as(i32, 2), g.healed);
+}
+
+test "a totem heals completely 60% of the time and curses 40%" {
+    var heals: usize = 0;
+    var curses: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 1000) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, totem_layout);
+        g.hp = 3;
+        g.step(.right);
+        try testing.expectEqual(Tile.floor, g.tileAt(g.hero)); // it disappears
+        if (g.totem_curse != null) {
+            curses += 1;
+            try testing.expect(g.events.curse);
+        } else {
+            heals += 1;
+            try testing.expectEqual(g.max_hp, g.hp);
+            try testing.expectEqual(g.max_hp - 3, g.healed);
+        }
+    }
+    try testing.expect(heals >= 550 and heals <= 650);
+    try testing.expectEqual(@as(usize, 1000), heals + curses);
+}
+
+test "a totem curse says where it came from" {
+    var seed: u64 = 0;
+    while (true) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, totem_layout);
+        g.step(.right);
+        if (g.totem_curse == null) continue;
+        var buf: [16384]u8 = undefined;
+        const out = try renderToBuf(&g, &buf, .{});
+        try testing.expect(std.mem.indexOf(u8, out, "(a totem curse)") != null);
+        break;
+    }
+}
+
+test "totems show up on about 10% of levels and never two levels in a row" {
+    var with_totem: usize = 0;
+    var levels: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 300) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        var prev = false;
+        for (1..21) |n| {
+            if (n > 1) g.loadLevel(@intCast(n));
+            var count: usize = 0;
+            for (g.map) |row| for (row) |t| {
+                if (t == .totem) count += 1;
+            };
+            try testing.expect(count <= 1);
+            const has = count == 1;
+            try testing.expect(!(has and prev));
+            if (has) with_totem += 1;
+            levels += 1;
+            prev = has;
+        }
+    }
+    const percent = with_totem * 100 / levels;
+    try testing.expect(percent >= 6 and percent <= 12);
+}
+
+test "shops and fountains never hold a totem" {
+    var seed: u64 = 0;
+    while (seed < 200) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, test_layout);
+        g.loadShop(3);
+        for (g.map) |row| for (row) |t| try testing.expect(t != .totem);
+        g.loadFountain(5);
+        for (g.map) |row| for (row) |t| try testing.expect(t != .totem);
+    }
+}
+
+test "the header shows the raised max HP" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    g.max_hp = 14;
+    g.hp = 11;
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "HP 11/14") != null);
+}
+
+test "fountains, offerings and totems have their own symbols and colors" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, fountain_layout);
+    var buf: [16384]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_blue ++ "~") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ "+") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ansi_purple ++ "Y") != null);
 }

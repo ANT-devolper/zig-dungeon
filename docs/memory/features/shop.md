@@ -9,7 +9,7 @@ A shop is a level where the hero spends gold on potions. All the rules below are
 The **shop event** is called on the stairs of every even level (2, 4, 6...) in `nextLevel`, never from a shop:
 
 1. If `shop_skip` is set (a shop just showed up), the event is **not called at all**: no roll, `shop_calls` does not grow, the flag clears and a normal level loads.
-2. Otherwise `shop_calls += 1` and the roll is `shop_first_chance` (**80%**) on the first call, `shop_chance` (**50%**) on every later one. On success the next level is a shop and `shop_skip` is set.
+2. Otherwise `shop_calls += 1` and the roll is `shop_first_chance` (**80%**) on the first call, `shop_chance` (**50%**) on every later one. On success `shop_skip` is set and a second roll picks the room: **70% a shop, 30% a fountain** (`fountain_chance`, see [fountains-totems.md](fountains-totems.md)). Both use `loadRoom`; `inRoom()` is true for either.
 
 Example: level 2's stairs roll 80% -> shop on level 3 -> level 4's stairs are skipped -> level 6's stairs roll 50%. If level 2's roll fails, level 4's stairs roll 50%.
 

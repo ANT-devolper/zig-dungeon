@@ -8,6 +8,7 @@ Code: `Game.loadLevel`, `generateLevel`, `tryGenerateLevel`, `carveMaze`, `carve
 2. **`carveShortcuts`** opens `maze_loops` (8) extra walls between cells, creating loops. It only ever adds paths, so all floor stays connected and **the stairs are always reachable**. It never opens (even, even) tiles, so corridors stay one tile wide.
 3. The hero starts on a random cell. The stairs go on the floor tile farthest from the hero (`distanceMap`, a BFS), at least `min_stairs_distance` (10) steps away. Monsters spawn at random (`spawnMonsters`), at least `monster_safe_distance` (5) from the hero.
 4. **`spawnLoot`** fills `loot_count` (4) item spots, preferring dead ends (`isDeadEnd`). Each spot holds a chest (`&`, `chest_chance` 25%) or gold (`$`, `randomLoot`). What a chest holds is rolled when it is opened: see [potions.md](potions.md).
+5. **`spawnTotem`** may turn one loot spot into a totem (`Y`, 10%, never on two levels in a row): see [fountains-totems.md](fountains-totems.md).
 
 ## Tests
 
