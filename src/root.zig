@@ -248,6 +248,8 @@ pub const MonsterKind = enum {
     thief,
     /// Tough and hits for 2, but slow: acts every other round, sees 2 tiles.
     brute,
+    /// Walks through the inner walls (never the border).
+    ghost,
     /// The letter drawn on the map.
     pub fn symbol(k: MonsterKind) u8 {
         return switch (k) {
@@ -257,6 +259,7 @@ pub const MonsterKind = enum {
             .small_slime => 's',
             .thief => 'T',
             .brute => 'B',
+            .ghost => 'G',
         };
     }
 
@@ -269,6 +272,7 @@ pub const MonsterKind = enum {
             .small_slime => @max(1, @divTrunc(Game.monsterHp(level), 2)),
             .thief => @max(1, Game.monsterHp(level) - 1),
             .brute => Game.monsterHp(level) + 3,
+            .ghost => @max(1, Game.monsterHp(level) - 1),
         };
     }
 
@@ -277,6 +281,7 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster, .rat, .slime, .small_slime, .thief => monster_damage,
             .brute => brute_damage,
+            .ghost => monster_damage,
         };
     }
 
@@ -288,6 +293,7 @@ pub const MonsterKind = enum {
             .rat => 5, // the monster's + 1
             .thief => 5,
             .brute => 2,
+            .ghost => 6,
         };
     }
 
@@ -307,6 +313,7 @@ pub const MonsterKind = enum {
             .slime, .small_slime => 3,
             .thief => 4,
             .brute => 5,
+            .ghost => 5,
         };
     }
 
@@ -319,6 +326,7 @@ pub const MonsterKind = enum {
             .small_slime => 0, // only from a slime's split
             .thief => 10,
             .brute => 10,
+            .ghost => 10,
         };
     }
 
@@ -329,6 +337,7 @@ pub const MonsterKind = enum {
             .slime, .small_slime => "A slime bites you!",
             .thief => "The thief stabs you!",
             .brute => "The brute hits you hard!",
+            .ghost => "The ghost chills you!",
         };
     }
 
@@ -339,6 +348,7 @@ pub const MonsterKind = enum {
             .slime, .small_slime => "You hit the slime.",
             .thief => "You hit the thief.",
             .brute => "You hit the brute.",
+            .ghost => "You hit the ghost.",
         };
     }
 
@@ -350,6 +360,7 @@ pub const MonsterKind = enum {
             .small_slime => "You defeated a small slime!",
             .thief => "You defeated the thief!",
             .brute => "You defeated the brute!",
+            .ghost => "You defeated the ghost!",
         };
     }
 };
@@ -1187,6 +1198,7 @@ pub const Game = struct {
                     's' => g.addMonster(p, .small_slime),
                     'T' => g.addMonster(p, .thief),
                     'B' => g.addMonster(p, .brute),
+                    'G' => g.addMonster(p, .ghost),
                     else => {},
                 }
             }
@@ -1723,7 +1735,7 @@ pub const Game = struct {
         var n: usize = 0;
         for (directions) |d| {
             const next = m.pos.add(d);
-            if (g.isFreeForMonster(next)) {
+            if (g.canEnter(m, next)) {
                 options[n] = next;
                 n += 1;
             }
@@ -1736,6 +1748,14 @@ pub const Game = struct {
         return g.tileAt(p) != .wall and g.monsterAt(p) == null and !p.eql(g.hero);
     }
 
+    /// Whether monster `m` may step on `p`. A ghost also goes through the
+    /// inner walls, but never into the map's border.
+    fn canEnter(g: *const Game, m: *const Monster, p: Pos) bool {
+        if (m.kind != .ghost) return g.isFreeForMonster(p);
+        const inside = p.x >= 1 and p.y >= 1 and p.x <= W - 2 and p.y <= H - 2;
+        return inside and g.monsterAt(p) == null and !p.eql(g.hero);
+    }
+
     /// Steps to the free tile next to `m` that is farthest from `from`, if
     /// that gets it farther away; otherwise stays put.
     fn moveMonsterAway(g: *Game, m: *Monster, from: Pos) void {
@@ -1743,7 +1763,7 @@ pub const Game = struct {
         var best_dist = m.pos.manhattan(from);
         for (directions) |d| {
             const next = m.pos.add(d);
-            if (!g.isFreeForMonster(next)) continue;
+            if (!g.canEnter(m, next)) continue;
             const dist = next.manhattan(from);
             if (dist > best_dist) {
                 best = next;
@@ -1766,7 +1786,7 @@ pub const Game = struct {
         for (options) |d| {
             if (d.x == 0 and d.y == 0) continue;
             const next = m.pos.add(d);
-            if (g.isFreeForMonster(next)) {
+            if (g.canEnter(m, next)) {
                 m.pos = next;
                 return;
             }
@@ -5013,6 +5033,61 @@ test "a brute bites for 2 and acts every other round" {
 test "a brute only chases from 2 tiles away" {
     try testing.expect(alwaysChasesFrom(.brute, 2));
     try testing.expect(!alwaysChasesFrom(.brute, 3));
+}
+
+test "a ghost walks through walls but not the border" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#######",
+        "#@.#.G#",
+        "#######",
+    });
+    g.step(.wait); // through the floor
+    try testing.expectEqual(@as(i32, 4), g.monsters[0].pos.x);
+    g.step(.wait); // into the inner wall
+    try testing.expectEqual(@as(i32, 3), g.monsters[0].pos.x);
+    try testing.expectEqual(Tile.wall, g.tileAt(g.monsters[0].pos));
+    // The hero can hit a ghost inside a wall (the hit comes before it moves).
+    g.hero.x = 2;
+    g.monsters[0].hp = 1;
+    g.step(.right);
+    try testing.expect(g.hit_killed);
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+    try testing.expectEqual(@as(i32, 2), g.hero.x); // the wall still blocks the hero
+    // Wandering never takes a ghost into the border.
+    var seed: u64 = 0;
+    while (seed < 50) : (seed += 1) {
+        var p2 = std.Random.DefaultPrng.init(seed);
+        var g2 = testGame(&p2, pocket_layout);
+        g2.monster_count = 0;
+        g2.addMonster(.{ .x = 28, .y = 10 }, .ghost);
+        for (0..100) |_| {
+            g2.step(.wait);
+            const p = g2.monsters[0].pos;
+            try testing.expect(p.x >= 1 and p.y >= 1 and p.x <= W - 2 and p.y <= H - 2);
+        }
+    }
+}
+
+test "other monsters never walk into walls" {
+    var seed: u64 = 0;
+    while (seed < 30) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        g.loadLevel(9);
+        for (0..60) |_| {
+            g.step(.wait);
+            if (g.state != .playing) break;
+            for (g.monsters[0..g.monster_count]) |m| {
+                if (m.kind != .ghost) try testing.expect(g.tileAt(m.pos) != .wall);
+            }
+        }
+    }
+}
+
+test "a ghost chases from 6 tiles away" {
+    try testing.expect(alwaysChasesFrom(.ghost, 6));
+    try testing.expect(!alwaysChasesFrom(.ghost, 7));
 }
 
 test "every kind wanders while the hero is invisible" {

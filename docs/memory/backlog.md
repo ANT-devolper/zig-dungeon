@@ -8,11 +8,11 @@ Ideas and known issues not done yet. Link a GitHub issue when one exists: `[#N](
 
 The user chose these four directions to make the game more fun. They do not all have to be done at once; pick one at a time. The numbers and names below are suggestions, still to be confirmed with the user before each one is built.
 
-- [ ] **Monster variety.** New monster kinds that change how a fight plays, built on the existing round system (`monstersTurn`):
+- [x] **Monster variety.** Done on 2026-11-16 (one commit per kind; each kind has its own sight). See [features/monsters.md](features/monsters.md):
   - [x] Rat (`r`): 1 HP, acts twice per round, comes in groups (from level 2, sight 5).
   - [x] Brute (`B`): acts every other round, bites for 2 (from level 5, sight 2, HP +3).
   - [x] Thief (`T`): steals 25 gold (the score) and runs away; killing it gives the gold back (from level 4, sight 5).
-  - [ ] Ghost (`G`): walks through walls, from level 5 on.
+  - [x] Ghost (`G`): walks through walls, from level 5 on (not the border, sight 6).
   - [x] Slime (`S`): splits into two small slimes when it dies (from level 3).
 - [x] **Sneak attack.** Done on 2026-11-16, reshaped by the user: a hit while invisible or during time stop deals double damage. See [features/monsters.md](features/monsters.md).
 - [ ] **Level-up perks.** Every 3 levels (the same pace as monster HP), the stairs offer a choice with one key: +3 max HP, +1 permanent damage or +1 view radius. Fixes the late game, where `max_hp` (10) and the hero's damage (2) never grow while monster HP does.

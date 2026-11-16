@@ -14,6 +14,7 @@ Every monster has a `kind` (`MonsterKind`), which gives its letter, HP, bite, si
 | small slime | `s` | 3 (only from a split) | 0 | max(1, `monsterHp(level)` / 2) | 1 | 4 | 1 |
 | thief | `T` | 4 | 10 | max(1, `monsterHp(level)` - 1) | 1 (only with no gold to steal) | 5 | 1 |
 | brute | `B` | 5 | 10 | `monsterHp(level)` + 3 | **2** (`brute_damage`) | **2** | every other round (`Monster.rested`) |
+| ghost | `G` | 5 | 10 | max(1, `monsterHp(level)` - 1) | 1 | **6** | 1 |
 
 Test layouts map each letter to its kind in `loadLayout`.
 
@@ -22,6 +23,8 @@ Test layouts map each letter to its kind in `loadLayout`.
 **Thief** (`monsterAct`, `moveMonsterAway`): next to the hero, if the hero has gold, it steals `thief_steal` (25, or all if less) instead of biting, into `Monster.gold`. From then on it only runs away (`moveMonsterAway`: the free neighbor farthest from the hero, if that is farther) and never steals again. With no gold to steal it stabs for 1. Killing it gives its gold back (`recovered`). Render appends " (-N gold)" in red (`stolen`) and " (+N gold back)" in green; `events.stolen` plays `Sfx.curse`. If the hero leaves the level, the gold is lost.
 
 **Brute**: `monstersTurn` toggles `Monster.rested`: it acts in one round and rests in the next (first round: it acts). Under the slow curse it still acts at most once per round. "The brute hits you hard!".
+
+**Ghost** (`canEnter`): every monster step (chase, wander, flee) goes through `canEnter(m, p)`. For a ghost it allows inner walls but never the map's border (x 1..W-2, y 1..H-2); other kinds use `isFreeForMonster` (no walls). It spawns on floor like the rest. The hero can hit a ghost inside a wall (the attack checks `monsterAt` before the tile), but cannot walk in.
 
 **Spawning** (`spawnMonsters`): the count stays `min(max_monsters, 1 + 2 * level)`. Each monster's kind is rolled by `randomMonsterKind` among the kinds whose `firstLevel()` is reached, weighted by `spawnWeight()` (level 1 is all `M`). A rat brings 1 or 2 more rats (`rat_group_min`..`rat_group_max` = a group of 2-3) on free tiles next to it (`freeSpotNear`), or anywhere if there is no room; they count toward the total, so the count is exact. Spots keep `monster_safe_distance` (5) from the hero (`monsterSpawnSpot`).
 
@@ -32,7 +35,7 @@ Test layouts map each letter to its kind in `loadLayout`.
   - **Next to the hero:** it bites for `kind.damage()` (1 for `M`), with `kind.biteMessage()`. `Monster.bit` marks it for the white-on-red highlight, and `Game.damage_taken` triggers the red flash and shake.
   - **Within its sight** (`kind.sight()`, Manhattan distance): it steps toward the hero (`moveMonsterToward`).
   - **Otherwise:** `wander_chance` (30%) per round to step in a random free direction (`wander`).
-- Both kinds of step use `isFreeForMonster`: no wall, no other monster, not the hero.
+- Every step uses `canEnter(m, p)`: no other monster, not the hero, and no wall (except ghosts, which skip inner walls).
 - Monsters have `monsterHp(level)` HP: `monster_hp` (3) plus 1 every `monster_hp_step` (3) levels, so 3 on levels 1-3, 4 on 4-6, 5 on 7-9... The bite stays at 1. The hero hits for `attackDamage()` (2, plus any strength bonus), so a plain monster dies in 2 hits.
 - **Sneak attack** (user rules): a hit while the hero is invisible or time is stopped (`isSneaky()`) deals `attackDamage() * sneak_multiplier` (2), strength included: `(2 + bonus) x 2`. Both at once is still x2. A plain 3-4 HP monster dies in one sneak hit. The hit still ends invisibility (time stop goes on). `Game.sneak_damage` makes render append " (sneak attack: N damage)" in yellow right after the message. Same strike/kill sound and spark.
 - Killing the last monster of a level reveals the stairs through the field of view (see [fov.md](fov.md)).

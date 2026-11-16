@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-16
 
-- `(this commit)` feat: add brutes that hit hard but act every other round. `MonsterKind.brute` (`B`, HP +3, bite 2, sight 2), `Monster.rested`. ([monsters](features/monsters.md))
+- `(this commit)` feat: add ghosts that walk through walls. `MonsterKind.ghost` (`G`, HP -1, sight 6); `canEnter` lets ghosts cross inner walls but not the border. ([monsters](features/monsters.md))
+- `767d1bd` feat: add brutes that hit hard but act every other round. `MonsterKind.brute` (`B`, HP +3, bite 2, sight 2), `Monster.rested`. ([monsters](features/monsters.md))
 - `48e3f16` feat: add thieves that steal gold and run away. `MonsterKind.thief` (`T`), `Monster.gold`, `moveMonsterAway`, `stolen`/`recovered`, `events.stolen`. ([monsters](features/monsters.md))
 - `52e986c` feat: add slimes that split in two when they die. `MonsterKind.slime` (`S`, HP +1) and `.small_slime` (`s`); `splitSlime` runs before the clear check. ([monsters](features/monsters.md))
 - `656d4fc` feat: add rats that act twice per round and come in groups. `MonsterKind.rat` (`r`, 1 HP, sight 5, 2 actions); spawn kinds rolled by level and weight (`randomMonsterKind`); rats spawn in groups of 2-3. ([monsters](features/monsters.md))
