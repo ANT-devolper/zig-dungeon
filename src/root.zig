@@ -200,7 +200,6 @@ pub const Curse = enum {
     confused,
 };
 
-const chase_radius = 6;
 /// Chance (in %) that a monster that is not chasing takes a random step.
 const wander_chance = 30;
 
@@ -235,9 +234,63 @@ pub const Pos = struct {
     }
 };
 
+/// What a monster is. Each kind has its own letter, HP, bite and sight.
+pub const MonsterKind = enum {
+    /// The plain `M`.
+    monster,
+
+    /// The letter drawn on the map.
+    pub fn symbol(k: MonsterKind) u8 {
+        return switch (k) {
+            .monster => 'M',
+        };
+    }
+
+    /// HP when it spawns on level `level`.
+    pub fn maxHp(k: MonsterKind, level: u32) i32 {
+        return switch (k) {
+            .monster => Game.monsterHp(level),
+        };
+    }
+
+    /// Damage of one bite.
+    pub fn damage(k: MonsterKind) i32 {
+        return switch (k) {
+            .monster => monster_damage,
+        };
+    }
+
+    /// Chase radius (Manhattan distance): it comes after the hero from
+    /// this far away (user rules).
+    pub fn sight(k: MonsterKind) i32 {
+        return switch (k) {
+            .monster => 4,
+        };
+    }
+
+    pub fn biteMessage(k: MonsterKind) []const u8 {
+        return switch (k) {
+            .monster => "A monster bites you!",
+        };
+    }
+
+    pub fn hitMessage(k: MonsterKind) []const u8 {
+        return switch (k) {
+            .monster => "You hit the monster.",
+        };
+    }
+
+    pub fn defeatMessage(k: MonsterKind) []const u8 {
+        return switch (k) {
+            .monster => "You defeated a monster!",
+        };
+    }
+};
+
 pub const Monster = struct {
     pos: Pos,
     hp: i32,
+    kind: MonsterKind = .monster,
     /// True if this monster bit the hero during the last turn.
     bit: bool = false,
 };
@@ -1040,7 +1093,7 @@ pub const Game = struct {
                 };
                 switch (c) {
                     '@' => g.hero = p,
-                    'M' => g.addMonster(p),
+                    'M' => g.addMonster(p, .monster),
                     else => {},
                 }
             }
@@ -1052,9 +1105,9 @@ pub const Game = struct {
         return monster_hp + @as(i32, @intCast((level - 1) / monster_hp_step));
     }
 
-    fn addMonster(g: *Game, p: Pos) void {
+    fn addMonster(g: *Game, p: Pos, kind: MonsterKind) void {
         if (g.monster_count == max_monsters) return;
-        g.monsters[g.monster_count] = .{ .pos = p, .hp = monsterHp(g.level) };
+        g.monsters[g.monster_count] = .{ .pos = p, .hp = kind.maxHp(g.level), .kind = kind };
         g.monster_count += 1;
     }
 
@@ -1078,7 +1131,7 @@ pub const Game = struct {
             // Never spawn right next to the hero, to give them a chance at the start.
             var p = g.randomFreeFloor();
             while (p.manhattan(g.hero) < 5) p = g.randomFreeFloor();
-            g.addMonster(p);
+            g.addMonster(p, .monster);
         }
     }
 
@@ -1164,6 +1217,7 @@ pub const Game = struct {
                     if (sneak) g.sneak_damage = damage; // render() appends it
                     g.monsters[i].hp -= damage;
                     g.hit_pos = target;
+                    const kind = g.monsters[i].kind;
                     if (g.monsters[i].hp <= 0) {
                         g.removeMonster(i);
                         g.hit_killed = true;
@@ -1172,10 +1226,10 @@ pub const Game = struct {
                             // render() appends the reward.
                             g.message = "You defeated the last monster! The stairs are revealed.";
                         } else {
-                            g.message = "You defeated a monster!";
+                            g.message = kind.defeatMessage();
                         }
                     } else {
-                        g.message = "You hit the monster.";
+                        g.message = kind.hitMessage();
                     }
                 } else if (g.isShopkeeper(target)) {
                     g.message = "The shopkeeper smiles. Walk over an item to buy it.";
@@ -1443,26 +1497,33 @@ pub const Game = struct {
     /// the hero, so a chase stops and nobody bites.
     fn monstersTurn(g: *Game, hidden: bool) void {
         for (g.monsters[0..g.monster_count]) |*m| {
-            const dist = m.pos.manhattan(g.hero);
-            if (hidden) {
-                if (g.rng.uintLessThan(u8, 100) < wander_chance) g.wander(m);
-            } else if (dist == 1) {
-                g.hp -= monster_damage;
-                g.damage_taken += monster_damage;
-                m.bit = true;
-                g.message = "A monster bites you!";
-                if (g.hp <= 0) {
-                    g.hp = 0;
-                    g.state = .lost;
-                    g.events.lost = true;
-                    g.message = "You died. GAME OVER.";
-                    return;
-                }
-            } else if (dist <= chase_radius) {
-                g.moveMonsterToward(m, g.hero);
-            } else if (g.rng.uintLessThan(u8, 100) < wander_chance) {
-                g.wander(m);
+            g.monsterAct(m, hidden);
+            if (g.state != .playing) return;
+        }
+    }
+
+    /// One action of one monster: bite when next to the hero, chase
+    /// within its sight, otherwise wander now and then.
+    fn monsterAct(g: *Game, m: *Monster, hidden: bool) void {
+        const dist = m.pos.manhattan(g.hero);
+        if (hidden) {
+            if (g.rng.uintLessThan(u8, 100) < wander_chance) g.wander(m);
+        } else if (dist == 1) {
+            const dmg = m.kind.damage();
+            g.hp -= dmg;
+            g.damage_taken += dmg;
+            m.bit = true;
+            g.message = m.kind.biteMessage();
+            if (g.hp <= 0) {
+                g.hp = 0;
+                g.state = .lost;
+                g.events.lost = true;
+                g.message = "You died. GAME OVER.";
             }
+        } else if (dist <= m.kind.sight()) {
+            g.moveMonsterToward(m, g.hero);
+        } else if (g.rng.uintLessThan(u8, 100) < wander_chance) {
+            g.wander(m);
         }
     }
 
@@ -1605,7 +1666,7 @@ pub const Game = struct {
                         ansi_bite
                     else
                         ansi_red;
-                    break :blk 'M';
+                    break :blk g.monsters[i].kind.symbol();
                 } else switch (g.map[y][x]) {
                     .wall => '#',
                     .floor => '.',
@@ -3379,7 +3440,7 @@ test "killing the last monster says the stairs are revealed" {
         "##############################",
     });
     // Add a far one by hand: it cannot bite yet.
-    g.addMonster(.{ .x = 28, .y = 10 });
+    g.addMonster(.{ .x = 28, .y = 10 }, .monster);
     for (g.monsters[0..g.monster_count]) |*m| m.hp = 1;
     g.hero = .{ .x = 2, .y = 2 };
     g.step(.up);
@@ -3474,7 +3535,7 @@ test "the clear reward rolls one chest per monster HP tier" {
 test "killing a monster that is not the last gives no reward" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, reward_layout);
-    g.addMonster(.{ .x = 28, .y = 10 }); // far away
+    g.addMonster(.{ .x = 28, .y = 10 }, .monster); // far away
     g.monsters[0].hp = 1;
     g.step(.right);
     try testing.expectEqualStrings("You defeated a monster!", g.message);
@@ -3901,21 +3962,21 @@ test "slowness makes the monsters act twice per round for 3 rounds" {
     g.applyCurse(.slow);
     try testing.expect(g.isCursed());
     // Within chase range, so it walks toward the hero every turn.
-    g.monsters[0].pos.x = 7;
+    g.monsters[0].pos.x = 5;
     g.step(.wait); // the drink round: one monster turn
-    try testing.expectEqual(@as(i32, 6), g.monsters[0].pos.x);
+    try testing.expectEqual(@as(i32, 4), g.monsters[0].pos.x);
     try testing.expectEqual(@as(u8, 3), g.slow);
-    g.monsters[0].pos.x = 7;
+    g.monsters[0].pos.x = 5;
     g.step(.wait); // slow round: two monster turns
-    try testing.expectEqual(@as(i32, 5), g.monsters[0].pos.x);
+    try testing.expectEqual(@as(i32, 3), g.monsters[0].pos.x);
     try testing.expectEqual(@as(u8, 2), g.slow);
     g.step(.wait);
     g.step(.wait);
     try testing.expectEqual(@as(u8, 0), g.slow);
     try testing.expect(!g.isCursed());
-    g.monsters[0].pos.x = 7;
+    g.monsters[0].pos.x = 5;
     g.step(.wait); // back to one turn per round
-    try testing.expectEqual(@as(i32, 6), g.monsters[0].pos.x);
+    try testing.expectEqual(@as(i32, 4), g.monsters[0].pos.x);
 }
 
 test "paralysis turns the next action into a lost turn" {
@@ -4468,4 +4529,38 @@ test "the message shows the sneak attack damage" {
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "You hit the monster. (sneak attack: 4 damage)") != null);
     const colored = try renderToBuf(&g, &buf, .{ .color = true });
     try testing.expect(std.mem.indexOf(u8, colored, ansi_yellow ++ " (sneak attack: 4 damage)") != null);
+}
+
+/// Puts a monster of `kind` `dist` tiles to the right of the hero in a
+/// corridor and runs one round, over 50 seeds. True if it came one tile
+/// closer every time (it chased). A monster out of sight may still wander
+/// toward the hero now and then, but never 50 times in a row.
+fn alwaysChasesFrom(kind: MonsterKind, dist: i32) bool {
+    var seed: u64 = 0;
+    while (seed < 50) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, &.{
+            "##############################",
+            "#@...........................#",
+            "##############################",
+        });
+        g.addMonster(.{ .x = 1 + dist, .y = 1 }, kind);
+        g.step(.wait);
+        if (g.monsters[0].pos.x != dist) return false;
+    }
+    return true;
+}
+
+test "a monster chases from 4 tiles away" {
+    try testing.expect(alwaysChasesFrom(.monster, 4));
+    try testing.expect(!alwaysChasesFrom(.monster, 5));
+    try testing.expectEqual(@as(i32, 4), MonsterKind.monster.sight());
+}
+
+test "monsters are drawn with their kind's letter" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, invisible_pocket_layout);
+    try testing.expectEqual(MonsterKind.monster, g.monsters[0].kind);
+    var buf: [16384]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "#@M##") != null);
 }

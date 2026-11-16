@@ -1,11 +1,23 @@
 # Monsters
 
-Code: `monstersTurn`, `moveMonsterToward`, `wander`, `isFreeForMonster`, `Monster` in `src/root.zig`.
+Code: `MonsterKind` (`symbol`, `maxHp`, `damage`, `sight`, `biteMessage`, `hitMessage`, `defeatMessage`), `Monster`, `monstersTurn`, `monsterAct`, `moveMonsterToward`, `wander`, `isFreeForMonster`, `addMonster(pos, kind)` in `src/root.zig`.
+
+## Kinds
+
+Every monster has a `kind` (`MonsterKind`), which gives its letter, HP, bite, sight (chase radius) and messages. Sight values are user rules (2026-11-16).
+
+| Kind | Letter | HP | Bite | Sight |
+|---|---|---|---|---|
+| monster | `M` | `monsterHp(level)` | 1 | 4 (was 6 before kinds) |
+
+Test layouts map each letter to its kind in `loadLayout`.
+
+## Turn
 
 - Each round (see [rounds.md](rounds.md)), unless time is stopped, every monster acts once (`monstersTurn(hidden)`):
   - **Hero invisible** (`hidden`, the invisibility potion, see [potions.md](potions.md)): every monster only wanders (`wander_chance` 30%), even next to the hero: no chase and no bite (a user rule). The AI keeps no chase state (it decides by distance every round), so a chase already under way simply stops.
-  - **Next to the hero:** it bites for `monster_damage` (1). `Monster.bit` marks it for the white-on-red highlight, and `Game.damage_taken` triggers the red flash and shake.
-  - **Within `chase_radius`** (6, Manhattan distance): it steps toward the hero (`moveMonsterToward`).
+  - **Next to the hero:** it bites for `kind.damage()` (1 for `M`), with `kind.biteMessage()`. `Monster.bit` marks it for the white-on-red highlight, and `Game.damage_taken` triggers the red flash and shake.
+  - **Within its sight** (`kind.sight()`, Manhattan distance): it steps toward the hero (`moveMonsterToward`).
   - **Otherwise:** `wander_chance` (30%) per round to step in a random free direction (`wander`).
 - Both kinds of step use `isFreeForMonster`: no wall, no other monster, not the hero.
 - Monsters have `monsterHp(level)` HP: `monster_hp` (3) plus 1 every `monster_hp_step` (3) levels, so 3 on levels 1-3, 4 on 4-6, 5 on 7-9... The bite stays at 1. The hero hits for `attackDamage()` (2, plus any strength bonus), so a plain monster dies in 2 hits.

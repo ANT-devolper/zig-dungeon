@@ -89,7 +89,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 - You only see what is in your line of sight, up to 5 tiles away, and walls block your view. Outside it the maze is drawn in light gray, and monsters, gold and the stairs are hidden.
 - Defeat every monster on a level and the stairs are revealed: they show on the map from anywhere until you go down.
 - Clearing a level is also **rewarded**: the moment the last monster dies you get chest rolls straight into your inventory (each one a potion or 20 to 50 gold, like a chest). You get 1 chest on levels 1-3, 2 on levels 4-6, 3 on levels 7-9, and one more every 3 levels as the monsters get tougher.
-- Monsters within 6 tiles chase you. Farther away, they wander around at random. A monster next to you bites for 1 damage per turn.
+- Monsters within 4 tiles chase you (each kind has its own sight). Farther away, they wander around at random. A monster next to you bites for 1 damage per turn.
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.
 - The dungeon has **no bottom**: every level is a new maze, and the goal is to go **as deep as you can**. Levels 1, 2 and 3 have 3, 5 and 7 monsters, and from level 4 on there are 8. Monsters also get tougher: 3 HP on levels 1-3, then **+1 HP every 3 levels** (4 HP on levels 4-6, 5 HP on 7-9, ...). Their bite always does 1 damage.
