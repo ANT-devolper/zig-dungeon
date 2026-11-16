@@ -240,12 +240,18 @@ pub const MonsterKind = enum {
     monster,
     /// Weak (1 HP) but fast: acts twice per round, comes in groups.
     rat,
+    /// Splits into two small slimes when it dies.
+    slime,
+    /// What a slime splits into; never spawns on its own.
+    small_slime,
 
     /// The letter drawn on the map.
     pub fn symbol(k: MonsterKind) u8 {
         return switch (k) {
             .monster => 'M',
             .rat => 'r',
+            .slime => 'S',
+            .small_slime => 's',
         };
     }
 
@@ -254,21 +260,23 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster => Game.monsterHp(level),
             .rat => 1,
+            .slime => Game.monsterHp(level) + 1,
+            .small_slime => @max(1, @divTrunc(Game.monsterHp(level), 2)),
         };
     }
 
     /// Damage of one bite.
     pub fn damage(k: MonsterKind) i32 {
         return switch (k) {
-            .monster, .rat => monster_damage,
+            .monster, .rat, .slime, .small_slime => monster_damage,
         };
     }
 
     /// Chase radius (Manhattan distance): it comes after the hero from
-    /// this far away (user rules).
+    /// this far away (user rules; the slimes' 4 is my pick).
     pub fn sight(k: MonsterKind) i32 {
         return switch (k) {
-            .monster => 4,
+            .monster, .slime, .small_slime => 4,
             .rat => 5, // the monster's + 1
         };
     }
@@ -286,6 +294,7 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster => 1,
             .rat => 2,
+            .slime, .small_slime => 3,
         };
     }
 
@@ -294,6 +303,8 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster => 40,
             .rat => 20,
+            .slime => 10,
+            .small_slime => 0, // only from a slime's split
         };
     }
 
@@ -301,6 +312,7 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster => "A monster bites you!",
             .rat => "A rat bites you!",
+            .slime, .small_slime => "A slime bites you!",
         };
     }
 
@@ -308,6 +320,7 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster => "You hit the monster.",
             .rat => "You hit the rat.",
+            .slime, .small_slime => "You hit the slime.",
         };
     }
 
@@ -315,6 +328,8 @@ pub const MonsterKind = enum {
         return switch (k) {
             .monster => "You defeated a monster!",
             .rat => "You defeated a rat!",
+            .slime => "You defeated a slime!", // when there is no room to split
+            .small_slime => "You defeated a small slime!",
         };
     }
 };
@@ -322,6 +337,8 @@ pub const MonsterKind = enum {
 /// Rats spawn in groups of 2 or 3 (each one counts as a monster).
 const rat_group_min = 2;
 const rat_group_max = 3;
+/// Small slimes a slime splits into (fewer if there is no room).
+const slime_split = 2;
 
 pub const Monster = struct {
     pos: Pos,
@@ -1131,6 +1148,8 @@ pub const Game = struct {
                     '@' => g.hero = p,
                     'M' => g.addMonster(p, .monster),
                     'r' => g.addMonster(p, .rat),
+                    'S' => g.addMonster(p, .slime),
+                    's' => g.addMonster(p, .small_slime),
                     else => {},
                 }
             }
@@ -1183,6 +1202,25 @@ pub const Game = struct {
                 left -= 1;
             }
         }
+    }
+
+    /// A dead slime becomes `slime_split` small slimes: on its own tile,
+    /// then on free tiles next to it, as long as there is room (tiles and
+    /// `max_monsters`). Returns how many were placed.
+    fn splitSlime(g: *Game, p: Pos) usize {
+        var placed: usize = 0;
+        if (g.isFreeForMonster(p) and g.monster_count < max_monsters) {
+            g.addMonster(p, .small_slime);
+            placed += 1;
+        }
+        for (directions) |d| {
+            if (placed == slime_split or g.monster_count == max_monsters) break;
+            const q = p.add(d);
+            if (!g.isFreeForMonster(q)) continue;
+            g.addMonster(q, .small_slime);
+            placed += 1;
+        }
+        return placed;
     }
 
     /// A random free floor tile far enough from the hero to give them a
@@ -1303,12 +1341,20 @@ pub const Game = struct {
                     g.hit_pos = target;
                     const kind = g.monsters[i].kind;
                     if (g.monsters[i].hp <= 0) {
+                        const dead_pos = g.monsters[i].pos;
                         g.removeMonster(i);
                         g.hit_killed = true;
+                        // A slime splits before the clear check, so the
+                        // stairs wait for the small slimes too.
+                        const split = if (kind == .slime) g.splitSlime(dead_pos) else 0;
                         if (g.stairsRevealed()) {
                             g.giveClearReward();
                             // render() appends the reward.
                             g.message = "You defeated the last monster! The stairs are revealed.";
+                        } else if (split == slime_split) {
+                            g.message = "The slime splits in two!";
+                        } else if (split > 0) {
+                            g.message = "The slime shrinks into a small slime!";
                         } else {
                             g.message = kind.defeatMessage();
                         }
@@ -4717,6 +4763,88 @@ test "new kinds only show up from their level on" {
             for (g.monsters[0..g.monster_count]) |m| try testing.expect(m.kind.firstLevel() <= n);
         }
     }
+}
+
+test "a slime splits into two small slimes when it dies" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#######",
+        "#.....#",
+        "#.@S..#",
+        "#.....#",
+        "#######",
+    });
+    g.addMonster(.{ .x = 5, .y = 1 }, .monster); // keeps the level uncleared
+    try testing.expectEqual(MonsterKind.slime.maxHp(1), g.monsters[0].hp);
+    try testing.expectEqual(@as(i32, 4), g.monsters[0].hp); // 3 + 1
+    g.monsters[0].hp = 1;
+    g.time_stop = 2; // the small slimes stay put and do not bite
+    g.step(.right);
+    try testing.expect(g.hit_killed);
+    var smalls: usize = 0;
+    for (g.monsters[0..g.monster_count]) |m| {
+        if (m.kind != .small_slime) continue;
+        smalls += 1;
+        try testing.expect(m.pos.manhattan(.{ .x = 3, .y = 2 }) <= 1); // next to the dead slime
+        try testing.expectEqual(@as(i32, 1), m.hp); // max(1, 3 / 2)
+    }
+    try testing.expectEqual(@as(usize, 2), smalls);
+    try testing.expectEqualStrings("The slime splits in two!", g.message);
+}
+
+test "small slimes do not split" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#####",
+        "#@s.#",
+        "#####",
+    });
+    g.addMonster(.{ .x = 3, .y = 1 }, .monster);
+    g.step(.right);
+    try testing.expectEqual(@as(usize, 1), g.monster_count);
+    try testing.expectEqualStrings("You defeated a small slime!", g.message);
+}
+
+test "the clear reward waits for the small slimes" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "######",
+        "#@S..#",
+        "######",
+    });
+    g.monsters[0].hp = 1;
+    g.step(.right); // the only monster splits: the level is not clear
+    try testing.expect(!g.stairsRevealed());
+    try testing.expectEqual(@as(u32, 0), g.reward_chests);
+    // Kill the small slimes one by one (1 HP each; they act after us).
+    var guard: usize = 0;
+    while (g.monster_count > 0 and guard < 20) : (guard += 1) {
+        const m = g.monsters[0];
+        const d: Command = if (m.pos.x > g.hero.x) .right else .left;
+        if (m.pos.manhattan(g.hero) == 1) g.step(d) else g.step(.wait);
+    }
+    try testing.expect(g.stairsRevealed());
+    try testing.expect(g.reward_chests > 0);
+}
+
+test "a slime with little room shrinks into one small slime" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#####",
+        "#@S##",
+        "#####",
+    });
+    // Fill the monster array: the dead slime frees only one slot.
+    while (g.monster_count < max_monsters) g.addMonster(.{ .x = 1, .y = 3 }, .monster);
+    g.monsters[0].hp = 1;
+    g.time_stop = 2; // nobody bites over the message
+    g.step(.right);
+    var smalls: usize = 0;
+    for (g.monsters[0..g.monster_count]) |m| {
+        if (m.kind == .small_slime) smalls += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), smalls);
+    try testing.expectEqualStrings("The slime shrinks into a small slime!", g.message);
 }
 
 test "every kind wanders while the hero is invisible" {

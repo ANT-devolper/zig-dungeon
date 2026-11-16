@@ -72,6 +72,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `@`    | you, the hero (cyan; red when hurt) |
 | `M`    | monster (red)      |
 | `r`    | rat (red): 1 HP, acts twice per round, comes in groups, from level 2 |
+| `S` `s` | slime and small slime (red): a slime splits into two small slimes when it dies, from level 3 |
 | `$`    | gold, +10 (green)  |
 | `&`    | chest: 20-50 gold or a potion (magenta) |
 | `>`    | stairs, your goal (yellow) |
