@@ -1,16 +1,19 @@
 # Monsters
 
-Code: `MonsterKind` (`symbol`, `maxHp`, `damage`, `sight`, `biteMessage`, `hitMessage`, `defeatMessage`), `Monster`, `monstersTurn`, `monsterAct`, `moveMonsterToward`, `wander`, `isFreeForMonster`, `addMonster(pos, kind)` in `src/root.zig`.
+Code: `MonsterKind` (`symbol`, `maxHp`, `damage`, `sight`, `actions`, `firstLevel`, `spawnWeight`, `biteMessage`, `hitMessage`, `defeatMessage`), `Monster`, `monstersTurn`, `monsterAct`, `moveMonsterToward`, `wander`, `isFreeForMonster`, `addMonster(pos, kind)`, `spawnMonsters`, `randomMonsterKind`, `monsterSpawnSpot`, `freeSpotNear` in `src/root.zig`.
 
 ## Kinds
 
 Every monster has a `kind` (`MonsterKind`), which gives its letter, HP, bite, sight (chase radius) and messages. Sight values are user rules (2026-11-16).
 
-| Kind | Letter | HP | Bite | Sight |
-|---|---|---|---|---|
-| monster | `M` | `monsterHp(level)` | 1 | 4 (was 6 before kinds) |
+| Kind | Letter | From level | Spawn weight | HP | Bite | Sight | Actions per round |
+|---|---|---|---|---|---|---|---|
+| monster | `M` | 1 | 40 | `monsterHp(level)` | 1 | 4 (was 6 before kinds) | 1 |
+| rat | `r` | 2 | 20 | 1 | 1 | 5 (the monster's + 1) | **2** (`actions()`): it moves twice, or bites twice |
 
 Test layouts map each letter to its kind in `loadLayout`.
+
+**Spawning** (`spawnMonsters`): the count stays `min(max_monsters, 1 + 2 * level)`. Each monster's kind is rolled by `randomMonsterKind` among the kinds whose `firstLevel()` is reached, weighted by `spawnWeight()` (level 1 is all `M`). A rat brings 1 or 2 more rats (`rat_group_min`..`rat_group_max` = a group of 2-3) on free tiles next to it (`freeSpotNear`), or anywhere if there is no room; they count toward the total, so the count is exact. Spots keep `monster_safe_distance` (5) from the hero (`monsterSpawnSpot`).
 
 ## Turn
 

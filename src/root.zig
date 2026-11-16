@@ -238,11 +238,14 @@ pub const Pos = struct {
 pub const MonsterKind = enum {
     /// The plain `M`.
     monster,
+    /// Weak (1 HP) but fast: acts twice per round, comes in groups.
+    rat,
 
     /// The letter drawn on the map.
     pub fn symbol(k: MonsterKind) u8 {
         return switch (k) {
             .monster => 'M',
+            .rat => 'r',
         };
     }
 
@@ -250,13 +253,14 @@ pub const MonsterKind = enum {
     pub fn maxHp(k: MonsterKind, level: u32) i32 {
         return switch (k) {
             .monster => Game.monsterHp(level),
+            .rat => 1,
         };
     }
 
     /// Damage of one bite.
     pub fn damage(k: MonsterKind) i32 {
         return switch (k) {
-            .monster => monster_damage,
+            .monster, .rat => monster_damage,
         };
     }
 
@@ -265,27 +269,59 @@ pub const MonsterKind = enum {
     pub fn sight(k: MonsterKind) i32 {
         return switch (k) {
             .monster => 4,
+            .rat => 5, // the monster's + 1
+        };
+    }
+
+    /// Actions per round.
+    pub fn actions(k: MonsterKind) usize {
+        return switch (k) {
+            .rat => 2,
+            else => 1,
+        };
+    }
+
+    /// The first level it can show up on.
+    pub fn firstLevel(k: MonsterKind) u32 {
+        return switch (k) {
+            .monster => 1,
+            .rat => 2,
+        };
+    }
+
+    /// Weight in the spawn roll, among the kinds unlocked on the level.
+    pub fn spawnWeight(k: MonsterKind) u32 {
+        return switch (k) {
+            .monster => 40,
+            .rat => 20,
         };
     }
 
     pub fn biteMessage(k: MonsterKind) []const u8 {
         return switch (k) {
             .monster => "A monster bites you!",
+            .rat => "A rat bites you!",
         };
     }
 
     pub fn hitMessage(k: MonsterKind) []const u8 {
         return switch (k) {
             .monster => "You hit the monster.",
+            .rat => "You hit the rat.",
         };
     }
 
     pub fn defeatMessage(k: MonsterKind) []const u8 {
         return switch (k) {
             .monster => "You defeated a monster!",
+            .rat => "You defeated a rat!",
         };
     }
 };
+
+/// Rats spawn in groups of 2 or 3 (each one counts as a monster).
+const rat_group_min = 2;
+const rat_group_max = 3;
 
 pub const Monster = struct {
     pos: Pos,
@@ -1094,6 +1130,7 @@ pub const Game = struct {
                 switch (c) {
                     '@' => g.hero = p,
                     'M' => g.addMonster(p, .monster),
+                    'r' => g.addMonster(p, .rat),
                     else => {},
                 }
             }
@@ -1126,13 +1163,60 @@ pub const Game = struct {
         }
     }
 
+    /// Spawns exactly `count` monsters, each kind rolled with
+    /// `randomMonsterKind`. A rat brings 1 or 2 more rats next to it.
     fn spawnMonsters(g: *Game, count: usize) void {
-        for (0..count) |_| {
-            // Never spawn right next to the hero, to give them a chance at the start.
-            var p = g.randomFreeFloor();
-            while (p.manhattan(g.hero) < 5) p = g.randomFreeFloor();
-            g.addMonster(p, .monster);
+        var left = count;
+        while (left > 0) {
+            const kind = g.randomMonsterKind();
+            const p = g.monsterSpawnSpot();
+            g.addMonster(p, kind);
+            left -= 1;
+            if (kind != .rat) continue;
+            const group = g.rng.intRangeAtMost(usize, rat_group_min, rat_group_max);
+            var near = p;
+            for (1..group) |_| {
+                if (left == 0) break;
+                const q = g.freeSpotNear(near) orelse g.monsterSpawnSpot();
+                g.addMonster(q, .rat);
+                near = q;
+                left -= 1;
+            }
         }
+    }
+
+    /// A random free floor tile far enough from the hero to give them a
+    /// chance at the start.
+    fn monsterSpawnSpot(g: *Game) Pos {
+        var p = g.randomFreeFloor();
+        while (p.manhattan(g.hero) < monster_safe_distance) p = g.randomFreeFloor();
+        return p;
+    }
+
+    /// A free floor tile next to `p`, still far enough from the hero.
+    fn freeSpotNear(g: *const Game, p: Pos) ?Pos {
+        for (directions) |d| {
+            const q = p.add(d);
+            if (g.tileAt(q) == .floor and g.isFreeForMonster(q) and
+                q.manhattan(g.hero) >= monster_safe_distance) return q;
+        }
+        return null;
+    }
+
+    /// Rolls a monster kind among those unlocked on the current level,
+    /// by `spawnWeight`.
+    fn randomMonsterKind(g: *Game) MonsterKind {
+        var total: u32 = 0;
+        for (std.enums.values(MonsterKind)) |k| {
+            if (k.firstLevel() <= g.level) total += k.spawnWeight();
+        }
+        var roll = g.rng.uintLessThan(u32, total);
+        for (std.enums.values(MonsterKind)) |k| {
+            if (k.firstLevel() > g.level) continue;
+            if (roll < k.spawnWeight()) return k;
+            roll -= k.spawnWeight();
+        }
+        unreachable;
     }
 
     pub fn tileAt(g: *const Game, p: Pos) Tile {
@@ -1497,8 +1581,10 @@ pub const Game = struct {
     /// the hero, so a chase stops and nobody bites.
     fn monstersTurn(g: *Game, hidden: bool) void {
         for (g.monsters[0..g.monster_count]) |*m| {
-            g.monsterAct(m, hidden);
-            if (g.state != .playing) return;
+            for (0..m.kind.actions()) |_| {
+                g.monsterAct(m, hidden);
+                if (g.state != .playing) return;
+            }
         }
     }
 
@@ -2353,7 +2439,10 @@ test "monsters gain 1 HP every 3 levels" {
     var g = Game.init(prng.random());
     for (g.monsters[0..g.monster_count]) |m| try testing.expectEqual(@as(i32, 3), m.hp);
     g.loadLevel(4);
-    for (g.monsters[0..g.monster_count]) |m| try testing.expectEqual(@as(i32, 4), m.hp);
+    // Other kinds have their own HP (rats 1); the plain monster gains it.
+    for (g.monsters[0..g.monster_count]) |m| {
+        if (m.kind == .monster) try testing.expectEqual(@as(i32, 4), m.hp);
+    }
 }
 
 test "the header shows the level with no last level" {
@@ -4532,9 +4621,9 @@ test "the message shows the sneak attack damage" {
 }
 
 /// Puts a monster of `kind` `dist` tiles to the right of the hero in a
-/// corridor and runs one round, over 50 seeds. True if it came one tile
-/// closer every time (it chased). A monster out of sight may still wander
-/// toward the hero now and then, but never 50 times in a row.
+/// corridor and runs one round, over 50 seeds. True if it came closer
+/// every time (it chased). A monster out of sight may still wander toward
+/// the hero now and then, but never 50 times in a row.
 fn alwaysChasesFrom(kind: MonsterKind, dist: i32) bool {
     var seed: u64 = 0;
     while (seed < 50) : (seed += 1) {
@@ -4546,7 +4635,7 @@ fn alwaysChasesFrom(kind: MonsterKind, dist: i32) bool {
         });
         g.addMonster(.{ .x = 1 + dist, .y = 1 }, kind);
         g.step(.wait);
-        if (g.monsters[0].pos.x != dist) return false;
+        if (g.monsters[0].pos.x >= 1 + dist) return false;
     }
     return true;
 }
@@ -4555,6 +4644,97 @@ test "a monster chases from 4 tiles away" {
     try testing.expect(alwaysChasesFrom(.monster, 4));
     try testing.expect(!alwaysChasesFrom(.monster, 5));
     try testing.expectEqual(@as(i32, 4), MonsterKind.monster.sight());
+}
+
+test "a rat chases from 5 tiles away" {
+    try testing.expect(alwaysChasesFrom(.rat, 5));
+    try testing.expect(!alwaysChasesFrom(.rat, 6));
+    try testing.expectEqual(@as(i32, 5), MonsterKind.rat.sight());
+}
+
+test "a rat acts twice per round" {
+    // A rat 5 tiles away (within its sight) takes 2 steps in one round.
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "##############################",
+        "#@....r......................#",
+        "##############################",
+    });
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, 4), g.monsters[0].pos.x);
+    // Next to the hero it bites twice per round.
+    g.monsters[0].pos.x = 2;
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp - 2), g.hp);
+}
+
+test "a rat has 1 HP and dies in one hit" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#####",
+        "#@r##",
+        "#####",
+    });
+    try testing.expectEqual(@as(i32, 1), g.monsters[0].hp);
+    g.step(.right);
+    try testing.expectEqual(@as(usize, 0), g.monster_count);
+}
+
+test "rats spawn in groups" {
+    // On every level from 2 on, count the rats that have another rat next
+    // to them: most rats do.
+    var rats: usize = 0;
+    var grouped: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 200) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        g.loadLevel(4);
+        try testing.expectEqual(@as(usize, max_monsters), g.monster_count);
+        for (g.monsters[0..g.monster_count]) |m| {
+            if (m.kind != .rat) continue;
+            rats += 1;
+            for (g.monsters[0..g.monster_count]) |o| {
+                if (o.kind == .rat and o.pos.manhattan(m.pos) == 1) {
+                    grouped += 1;
+                    break;
+                }
+            }
+        }
+    }
+    try testing.expect(rats > 0);
+    try testing.expect(grouped * 100 / rats >= 70);
+}
+
+test "new kinds only show up from their level on" {
+    var seed: u64 = 0;
+    while (seed < 200) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        for (g.monsters[0..g.monster_count]) |m| try testing.expectEqual(MonsterKind.monster, m.kind);
+        for (2..8) |n| {
+            g.loadLevel(@intCast(n));
+            for (g.monsters[0..g.monster_count]) |m| try testing.expect(m.kind.firstLevel() <= n);
+        }
+    }
+}
+
+test "every kind wanders while the hero is invisible" {
+    for (std.enums.values(MonsterKind)) |kind| {
+        var seed: u64 = 0;
+        while (seed < 50) : (seed += 1) {
+            var prng = std.Random.DefaultPrng.init(seed);
+            var g = testGame(&prng, invisible_room_layout);
+            g.monster_count = 0;
+            g.addMonster(g.hero.add(.{ .x = 1, .y = 0 }), kind);
+            g.inventory.gold = 50;
+            g.inventory.add(.invisibility);
+            g.step(.use_1);
+            for (0..invisible_turns) |_| g.step(.wait);
+            try testing.expectEqual(@as(i32, start_max_hp), g.hp);
+            try testing.expectEqual(@as(u32, 50), g.inventory.gold);
+        }
+    }
 }
 
 test "monsters are drawn with their kind's letter" {

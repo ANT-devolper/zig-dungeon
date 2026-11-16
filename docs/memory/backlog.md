@@ -9,7 +9,7 @@ Ideas and known issues not done yet. Link a GitHub issue when one exists: `[#N](
 The user chose these four directions to make the game more fun. They do not all have to be done at once; pick one at a time. The numbers and names below are suggestions, still to be confirmed with the user before each one is built.
 
 - [ ] **Monster variety.** New monster kinds that change how a fight plays, built on the existing round system (`monstersTurn`):
-  - [ ] Rat (`r`): 1 HP, acts twice per round, comes in groups.
+  - [x] Rat (`r`): 1 HP, acts twice per round, comes in groups (from level 2, sight 5).
   - [ ] Brute (`B`): acts every other round, bites for 2.
   - [ ] Thief (`T`): steals gold (the score) and runs away; killing it gives the gold back.
   - [ ] Ghost (`G`): walks through walls, from level 5 on.
