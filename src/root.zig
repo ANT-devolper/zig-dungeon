@@ -2746,8 +2746,6 @@ pub fn readDisguiseKey(in: *std.Io.Reader) std.Io.Reader.Error!?DisguiseKey {
 
 /// Lines of code shown on the panic screen (the rest scrolls away).
 pub const disguise_rows = 20;
-/// Characters typed by each key, like a fast typist.
-const disguise_chunk = 3;
 /// The fake file being edited, in the made-up project.
 const disguise_file = "app/inspecao.py";
 /// Column of `line,col` on the status line, like vim's ruler.
@@ -2857,14 +2855,132 @@ const disguise_code =
     \\
 ;
 
-/// The panic screen: a fake vim editing a Python file. Whatever the
-/// player types, the next piece of `disguise_code` appears ("hacker
-/// typer"), so it looks like fast, flawless programming (a user choice).
+// IDE colors for the panic screen: a dark theme in 256 colors (a user
+// choice). Code colors only set the foreground, so the dark background
+// stays on and `ESC[K` fills the rest of each line with it.
+const ide_bg = "\x1b[48;5;234m";
+const ide_text = "\x1b[38;5;252m";
+const ide_gutter = "\x1b[38;5;240m"; // line numbers
+const ide_keyword = "\x1b[38;5;176m"; // if, for, return, import...
+const ide_def = "\x1b[38;5;75m"; // def, class, self, None, True, False
+const ide_type = "\x1b[38;5;79m"; // Capitalized names: classes
+const ide_func = "\x1b[38;5;222m"; // names defined or called
+const ide_string = "\x1b[38;5;173m";
+const ide_number = "\x1b[38;5;151m";
+const ide_comment = "\x1b[38;5;71m";
+const ide_tilde = "\x1b[38;5;61m"; // vim's `~` past the end
+const ide_status = "\x1b[38;5;250;48;5;238m"; // the status bar
+const ide_mode = "\x1b[1;38;5;114m"; // -- INSERT --
+
+const ide_keywords = [_][]const u8{
+    "if",  "elif",   "else",   "for",   "while",    "in",    "not",    "and",
+    "or",  "is",     "return", "raise", "import",   "from",  "as",     "with",
+    "try", "except", "pass",   "break", "continue", "yield", "lambda",
+};
+const ide_defs = [_][]const u8{ "def", "class", "self", "None", "True", "False" };
+
+fn isIdentStart(c: u8) bool {
+    return std.ascii.isAlphabetic(c) or c == '_';
+}
+
+fn isIdentChar(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
+}
+
+fn isAnyOf(word: []const u8, list: []const []const u8) bool {
+    for (list) |item| if (std.mem.eql(u8, word, item)) return true;
+    return false;
+}
+
+/// One token of a Python line for the highlighter: where it ends, its
+/// color, and whether it is a name (for "the name after def/class").
+const CodeToken = struct { end: usize, color: []const u8, word: bool = false };
+
+/// The token of `line` that starts at `start`. `after_def` is true when the
+/// previous name was `def` or `class`, so this name is being defined.
+fn codeToken(line: []const u8, start: usize, after_def: bool) CodeToken {
+    const c = line[start];
+    if (c == '#') return .{ .end = line.len, .color = ide_comment };
+    // Strings, with an optional f prefix, single or triple quoted.
+    var q = start;
+    if (c == 'f' and start + 1 < line.len and (line[start + 1] == '"' or line[start + 1] == '\'')) q += 1;
+    if (line[q] == '"' or line[q] == '\'') {
+        const quote = line[q];
+        const triple = q + 2 < line.len and line[q + 1] == quote and line[q + 2] == quote;
+        var j = q + @as(usize, if (triple) 3 else 1);
+        while (j < line.len) : (j += 1) {
+            if (line[j] == '\\') {
+                j += 1;
+            } else if (triple) {
+                if (std.mem.startsWith(u8, line[j..], line[q .. q + 3])) return .{ .end = j + 3, .color = ide_string };
+            } else if (line[j] == quote) {
+                return .{ .end = j + 1, .color = ide_string };
+            }
+        }
+        return .{ .end = line.len, .color = ide_string };
+    }
+    if (std.ascii.isDigit(c)) {
+        var j = start;
+        while (j < line.len and (std.ascii.isDigit(line[j]) or line[j] == '.')) j += 1;
+        return .{ .end = j, .color = ide_number };
+    }
+    if (isIdentStart(c)) {
+        var j = start;
+        while (j < line.len and isIdentChar(line[j])) j += 1;
+        const word = line[start..j];
+        const called = j < line.len and line[j] == '(';
+        const color = if (isAnyOf(word, &ide_keywords))
+            ide_keyword
+        else if (isAnyOf(word, &ide_defs))
+            ide_def
+        else if (std.ascii.isUpper(c))
+            ide_type
+        else if (after_def or called)
+            ide_func
+        else
+            ide_text;
+        return .{ .end = j, .color = color, .word = true };
+    }
+    return .{ .end = start + 1, .color = ide_text };
+}
+
+/// Writes the first `shown` characters of a code line with IDE colors.
+/// The colors come from the whole line, so a word being typed already has
+/// its final color, like in an editor that knows the file.
+fn writeCodeLine(w: *std.Io.Writer, line: []const u8, shown_len: usize) std.Io.Writer.Error!void {
+    const shown = @min(shown_len, line.len);
+    var pos: usize = 0;
+    var after_def = false;
+    var color: []const u8 = "";
+    while (pos < shown) {
+        const t = codeToken(line, pos, after_def);
+        if (t.word) {
+            const word = line[pos..t.end];
+            after_def = std.mem.eql(u8, word, "def") or std.mem.eql(u8, word, "class");
+        } else if (line[pos] != ' ') {
+            after_def = false;
+        }
+        // Spaces keep the current color: fewer escape codes.
+        if (line[pos] != ' ' and !std.mem.eql(u8, color, t.color)) {
+            color = t.color;
+            try w.writeAll(color);
+        }
+        try w.writeAll(line[pos..@min(t.end, shown)]);
+        pos = t.end;
+    }
+}
+
+/// The panic screen: a fake vim editing a Python file, colored like an
+/// IDE. Each key the player presses types the next character of
+/// `disguise_code` ("hacker typer"), so it looks like real programming
+/// (user choices).
 pub const Disguise = struct {
     /// How many characters of `disguise_code` are on screen.
     typed: usize = 0,
 
-    /// Applies one key. Typing past the end starts the file over.
+    /// Applies one key: one more character (Enter: the rest of the line).
+    /// After a new line the indentation comes by itself, like an IDE's
+    /// auto-indent. Typing past the end starts the file over.
     pub fn key(d: *Disguise, k: DisguiseKey) void {
         switch (k) {
             .backspace => d.typed -|= 1,
@@ -2874,7 +2990,10 @@ pub const Disguise = struct {
                     const nl = std.mem.indexOfScalar(u8, disguise_code[d.typed..], '\n');
                     d.typed = if (nl) |i| d.typed + i + 1 else disguise_code.len;
                 } else {
-                    d.typed = @min(disguise_code.len, d.typed + disguise_chunk);
+                    d.typed += 1;
+                }
+                if (disguise_code[d.typed - 1] == '\n') {
+                    while (d.typed < disguise_code.len and disguise_code[d.typed] == ' ') d.typed += 1;
                 }
             },
             .escape, .ctrl_c => {},
@@ -2887,28 +3006,37 @@ pub const Disguise = struct {
     }
 
     /// Draws the editor over the whole screen without clearing it first
-    /// (each line is overwritten, so there is no flicker): the last
-    /// `disguise_rows` lines with their numbers, `~` below them, the status
-    /// line and `-- INSERT --`. The cursor ends after the last typed character.
+    /// (each line is overwritten, so there is no flicker), on a dark
+    /// background with IDE colors: the last `disguise_rows` lines with their
+    /// numbers, `~` below them, the status bar and `-- INSERT --`. Colors are
+    /// reset at the end, and the cursor ends after the last typed character.
     pub fn render(d: *const Disguise, w: *std.Io.Writer) std.Io.Writer.Error!void {
         const typed = d.text();
         const lines = std.mem.count(u8, typed, "\n") + 1;
         const first = lines -| disguise_rows; // index of the first line shown
         try w.writeAll("\x1b[H");
-        var it = std.mem.splitScalar(u8, typed, '\n');
-        var i: usize = 0;
-        var last: []const u8 = "";
-        while (it.next()) |line| : (i += 1) {
-            last = line;
+        // Walk the whole code: each typed line is drawn from its full line,
+        // so the colors know the words being typed.
+        var it = std.mem.splitScalar(u8, disguise_code, '\n');
+        var start: usize = 0; // where the current line starts in the code
+        var last_len: usize = 0;
+        for (0..lines) |i| {
+            const line = it.next() orelse "";
+            const shown = @min(line.len, typed.len - start);
+            last_len = shown;
+            start += line.len + 1;
             if (i < first) continue;
-            try w.print("{d:>4} {s}\x1b[K\n", .{ i + 1, line });
+            try w.print(ide_bg ++ ide_gutter ++ "{d:>4} ", .{i + 1});
+            try writeCodeLine(w, line, shown);
+            try w.writeAll("\x1b[K\n");
         }
-        for (lines - first..disguise_rows) |_| try w.writeAll("~\x1b[K\n");
+        for (lines - first..disguise_rows) |_| try w.writeAll(ide_bg ++ ide_tilde ++ "~\x1b[K\n");
         const status = "\"" ++ disguise_file ++ "\" [+]";
-        try w.writeAll(status);
+        try w.writeAll(ide_status ++ status);
         try w.splatByteAll(' ', disguise_ruler_col - status.len);
-        try w.print("{d},{d}\x1b[K\n-- INSERT --\x1b[K\x1b[J", .{ lines, last.len + 1 });
-        try w.print("\x1b[{d};{d}H", .{ lines - first, 6 + last.len });
+        try w.print("{d},{d}\x1b[K\n", .{ lines, last_len + 1 });
+        try w.writeAll(ide_bg ++ ide_mode ++ "-- INSERT --\x1b[K\x1b[J\x1b[0m");
+        try w.print("\x1b[{d};{d}H", .{ lines - first, 6 + last_len });
     }
 };
 
@@ -3149,14 +3277,40 @@ test "an Esc followed by another key leaves that key unread" {
     try testing.expectEqual(@as(?u8, 'q'), try readKey(&in));
 }
 
-test "every key types the next characters of the code" {
+/// The text of a frame without its ANSI escape sequences (all are CSI).
+fn stripAnsi(in: []const u8, out: []u8) []const u8 {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < in.len) {
+        if (in[i] == 0x1b) {
+            i += 2; // ESC [
+            while (i < in.len and !(in[i] >= 0x40 and in[i] <= 0x7e)) i += 1;
+            i += 1; // the final byte
+            continue;
+        }
+        out[n] = in[i];
+        n += 1;
+        i += 1;
+    }
+    return out[0..n];
+}
+
+/// Leading spaces of line `n` (0-based) of the panic screen's code.
+fn codeIndent(n: usize) usize {
+    var it = std.mem.splitScalar(u8, disguise_code, '\n');
+    for (0..n) |_| _ = it.next();
+    const line = it.next().?;
+    return line.len - std.mem.trimStart(u8, line, " ").len;
+}
+
+test "every key types one more character of the code" {
     var d: Disguise = .{};
     d.key(.other);
-    try testing.expectEqualStrings(disguise_code[0..disguise_chunk], d.text());
+    try testing.expectEqualStrings(disguise_code[0..1], d.text());
     d.key(.other);
-    try testing.expectEqual(@as(usize, 2 * disguise_chunk), d.typed);
+    try testing.expectEqual(@as(usize, 2), d.typed);
     d.key(.backspace);
-    try testing.expectEqual(@as(usize, 2 * disguise_chunk - 1), d.typed);
+    try testing.expectEqual(@as(usize, 1), d.typed);
     d.key(.enter); // finishes the first line
     try testing.expect(std.mem.endsWith(u8, d.text(), "\n"));
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, d.text(), "\n"));
@@ -3165,6 +3319,17 @@ test "every key types the next characters of the code" {
     d.key(.escape);
     d.key(.ctrl_c);
     try testing.expectEqual(before, d.typed);
+}
+
+test "a new line comes indented, like an IDE's auto-indent" {
+    const nl = std.mem.indexOf(u8, disguise_code, ":\n    ").? + 1;
+    var it = std.mem.splitScalar(u8, disguise_code[0..nl], '\n');
+    var line_no: usize = 0;
+    while (it.next()) |_| line_no += 1; // the line after the newline
+    var d: Disguise = .{ .typed = nl };
+    d.key(.other); // types the newline
+    try testing.expectEqual(nl + 1 + codeIndent(line_no), d.typed);
+    try testing.expect(disguise_code[d.typed] != ' ');
 }
 
 test "backspace never goes below the start" {
@@ -3178,60 +3343,100 @@ test "typing past the end of the code starts it over" {
     d.key(.other);
     try testing.expectEqual(disguise_code.len, d.typed);
     d.key(.other);
-    try testing.expectEqual(@as(usize, disguise_chunk), d.typed);
+    try testing.expectEqual(@as(usize, 1), d.typed);
 }
 
 test "the panic screen looks like vim with the typed code" {
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
+    var plain_buf: [16384]u8 = undefined;
     var d: Disguise = .{};
     var w: std.Io.Writer = .fixed(&buf);
     try d.render(&w);
     var out = w.buffered();
-    try testing.expect(std.mem.indexOf(u8, out, "-- INSERT --") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "\"app/inspecao.py\" [+]") != null);
-    try testing.expectEqual(@as(usize, disguise_rows - 1), std.mem.count(u8, out, "~\x1b[K\n"));
+    var plain = stripAnsi(out, &plain_buf);
+    try testing.expect(std.mem.indexOf(u8, plain, "-- INSERT --") != null);
+    try testing.expect(std.mem.indexOf(u8, plain, "\"app/inspecao.py\" [+]") != null);
+    try testing.expectEqual(@as(usize, disguise_rows - 1), std.mem.count(u8, plain, "~\n"));
     // The cursor sits after the line number on the first line.
     try testing.expect(std.mem.endsWith(u8, out, "\x1b[1;6H"));
 
     d.key(.enter);
     d.key(.enter);
-    d.key(.other);
+    for (0..3) |_| d.key(.other);
     w = .fixed(&buf);
     try d.render(&w);
     out = w.buffered();
-    try testing.expect(std.mem.indexOf(u8, out, "   1 \"\"\"Regras de inspecao") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "   3 fro\x1b[K") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "3,4") != null);
+    plain = stripAnsi(out, &plain_buf);
+    try testing.expect(std.mem.indexOf(u8, plain, "   1 \"\"\"Regras de inspecao") != null);
+    try testing.expect(std.mem.indexOf(u8, plain, "   3 fro\n") != null);
+    try testing.expect(std.mem.indexOf(u8, plain, "3,4") != null);
     try testing.expect(std.mem.endsWith(u8, out, "\x1b[3;9H"));
+    // Colors are reset before the cursor moves (back to the game cleanly).
+    try testing.expect(std.mem.endsWith(u8, out, "\x1b[0m\x1b[3;9H"));
 }
 
 test "the panic screen scrolls to show the last lines typed" {
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
+    var plain_buf: [16384]u8 = undefined;
     var d: Disguise = .{};
     for (0..30) |_| d.key(.enter);
     var w: std.Io.Writer = .fixed(&buf);
     try d.render(&w);
     const out = w.buffered();
-    // 31 lines (30 typed and an empty one): lines 12 to 31 are shown.
-    try testing.expect(std.mem.indexOf(u8, out, "  11 ") == null);
-    try testing.expect(std.mem.indexOf(u8, out, "\x1b[H  12 ") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "  31 \x1b[K") != null);
-    try testing.expectEqual(@as(usize, 0), std.mem.count(u8, out, "~\x1b[K\n"));
-    try testing.expect(std.mem.endsWith(u8, out, "\x1b[20;6H"));
+    const plain = stripAnsi(out, &plain_buf);
+    // 31 lines (30 typed and the current one): lines 12 to 31 are shown.
+    try testing.expect(std.mem.indexOf(u8, plain, "  11 ") == null);
+    try testing.expect(std.mem.startsWith(u8, plain, "  12 "));
+    try testing.expect(std.mem.indexOf(u8, plain, "  31 ") != null);
+    try testing.expectEqual(@as(usize, 0), std.mem.count(u8, plain, "~\n"));
+    var cursor: [16]u8 = undefined;
+    const want = try std.fmt.bufPrint(&cursor, "\x1b[20;{d}H", .{6 + codeIndent(30)});
+    try testing.expect(std.mem.endsWith(u8, out, want));
+}
+
+/// One code line drawn with `writeCodeLine`, `shown` characters of it.
+fn colorLine(buf: []u8, line: []const u8, shown: usize) ![]const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    try writeCodeLine(&w, line, shown);
+    return w.buffered();
+}
+
+test "the panic screen colors the code like an IDE" {
+    var buf: [1024]u8 = undefined;
+    var out = try colorLine(&buf, "def tamanho_amostra(tamanho_lote: int) -> int:", 46);
+    try testing.expect(std.mem.startsWith(u8, out, ide_def ++ "def " ++ ide_func ++ "tamanho_amostra" ++ ide_text ++ "("));
+    out = try colorLine(&buf, "    if tamanho_lote <= 0:", 25);
+    try testing.expect(std.mem.indexOf(u8, out, ide_keyword ++ "if") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ide_number ++ "0") != null);
+    out = try colorLine(&buf, "    \"\"\"Retorna o tamanho.\"\"\" # nota", 35);
+    try testing.expect(std.mem.indexOf(u8, out, ide_string ++ "\"\"\"Retorna o tamanho.\"\"\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ide_comment ++ "# nota") != null);
+    out = try colorLine(&buf, "x = f\"lote {n}\" + Decimal(1)", 28);
+    try testing.expect(std.mem.indexOf(u8, out, ide_string ++ "f\"lote {n}\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ide_type ++ "Decimal") != null);
+    out = try colorLine(&buf, "class ResultadoInspecao:", 24);
+    try testing.expect(std.mem.indexOf(u8, out, ide_def ++ "class " ++ ide_type ++ "ResultadoInspecao") != null);
+}
+
+test "a word being typed already has its final color" {
+    var buf: [256]u8 = undefined;
+    const out = try colorLine(&buf, "    return resultado", 7);
+    try testing.expectEqualStrings("    " ++ ide_keyword ++ "ret", out);
 }
 
 test "the panic screen shows nothing from the game" {
     var lines = std.mem.splitScalar(u8, disguise_code, '\n');
     while (lines.next()) |line| try testing.expect(line.len <= 75);
     for (disguise_code) |c| try testing.expect(c == '\n' or (c >= ' ' and c <= '~'));
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
+    var plain_buf: [16384]u8 = undefined;
     var d: Disguise = .{};
     while (d.typed < disguise_code.len) {
         var w: std.Io.Writer = .fixed(&buf);
         try d.render(&w);
-        const out = w.buffered();
+        const plain = stripAnsi(w.buffered(), &plain_buf);
         for ([_][]const u8{ "DUNGEON", "HP", "@", "Gold", "gold", "Level", "#####" }) |word| {
-            try testing.expect(std.mem.indexOf(u8, out, word) == null);
+            try testing.expect(std.mem.indexOf(u8, plain, word) == null);
         }
         d.key(.enter);
     }

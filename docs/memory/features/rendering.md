@@ -6,7 +6,7 @@ Code: `Game.render`, `RenderOptions`, `writeHeader`, `renderInventory`, the `ans
 
 - `RenderOptions{}` (the default) produces plain text with **no ANSI codes**; tests use it. Options: `color`, `flash` (red background), `shake` (row indent 0/1/2), `spark`, `fov` (see [fov.md](fov.md)).
 - Layout: header line (`writeHeader`: `Level N` with no maximum, plus ` (SHOP)` in a shop or ` (FOUNTAIN)` on a fountain level, `HP hp/max_hp` (max HP grows with offerings), gold, then `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N`, `INVISIBLE N`, `SLOW N`, `BLIND N`, `CONFUSED N`, `PARALYZED` while active, then `RIVAL Lv N` once the rival is met and alive, with ` HP x/y` while the hero sees it), blank line, the map, the message (with "(+N gold)", "(<potion>)", "(+N HP)", "(-N HP)" appended), and the help line `[w/a/s/d] move  [.] wait  [i] inventory  [q] quit` while playing. There is no `> ` prompt and no mention of Enter.
-- The panic screen (`Disguise.render`, a fake vim that "types" Python code) is drawn instead of the frame while the panic key is active; see [input-terminal.md](input-terminal.md#panic-button-user-choices).
+- The panic screen (`Disguise.render`, a fake vim with IDE colors that "types" Python code) is drawn instead of the frame while the panic key is active; see [input-terminal.md](input-terminal.md#panic-button-user-choices).
 - `drawFrame` in `main.zig` clears with `\x1b[2J\x1b[H` and always sets `fov`.
 
 ## Colors (`color = true`)

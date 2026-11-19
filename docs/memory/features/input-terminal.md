@@ -28,15 +28,26 @@ A user request: every key press acts at once, as if Enter were pressed after it.
 A user request: Space must hide the game at once and make the terminal look like work.
 
 - **A fake editor you type into** (user choices, 2026-11-19; it replaced a static PowerShell `pytest` screen). `panic_key` (`' '`), `Disguise`, `DisguiseKey`, `readDisguiseKey` and `disguise_code` live in `src/root.zig` (pure, tested).
-  - `Disguise.render` draws a vim look-alike over the whole screen, plain ASCII with no colors and nothing from the game:
+  - `Disguise.render` draws a vim look-alike over the whole screen, with **IDE colors** on a dark background (user request, 2026-11-19) and nothing from the game:
     - the last `disguise_rows` (20) typed lines, each with a right-aligned line number, and `~` rows below while the text is short
     - the status line `"app/inspecao.py" [+]` with `line,col` at column 60
     - `-- INSERT --`
     - finally the cursor (`ESC[r;cH`) after the last typed character
   - It overwrites each line with `ESC[K` instead of clearing, so typing does not flicker.
+  - **Colors** (`ide_*` constants, 256-color dark theme): the background is 234 on every line, filled by `ESC[K`. Line numbers are gray, `~` dim blue and the status bar gray on 238. The `-- INSERT --` line is bold green. It ends with `ESC[0m` before the cursor move, so the game's next clear has no background.
+    - `writeCodeLine`/`codeToken` is a small Python highlighter with these colors:
+      - keywords (`if`, `for`, `return`, `import`...) purple
+      - `def`, `class`, `self`, `None`, `True`, `False` blue
+      - Capitalized names (classes) teal
+      - names after `def`/`class` or before `(` yellow
+      - strings (with `f` and triple quotes) orange
+      - numbers light green
+      - `#` comments green
+    - Colors come from the **whole** code line, so a word being typed already has its final color. Code colors only set the foreground; spaces do not emit codes.
   - **"Hacker typer"**: whatever key is pressed types the next piece of `disguise_code`:
-    - any key (arrows and Space included) adds `disguise_chunk` (3) characters
+    - any key (arrows and Space included) adds **one character** (a user request; it was 3)
     - Enter adds up to the end of the line
+    - after a new line, the next line's indentation comes by itself, like an IDE's auto-indent
     - Backspace takes back one character
     - after the end of the code it starts over
   - `disguise_code` is about 95 lines of believable Python for the made-up `gestao-qualidade` project (inspection sampling, AQL, non-conformities): lines of 75 columns at most, and no `@`, so no decorators.
