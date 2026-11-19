@@ -8,6 +8,13 @@ const term = @import("term.zig");
 /// sounds play asynchronously straight from these buffers.
 var bank: sound.Bank = undefined;
 var muted = false;
+/// The dungeon theme, synthesized once; the player loops it from here.
+var music_buf: [sound.musicLen(sound.dungeon_theme)]u8 = undefined;
+var music: sound.MusicPlayer = .{};
+/// The player's choice with the `m` key; it holds across runs.
+var music_on = true;
+/// True while a run is on screen (the music only plays then).
+var in_dungeon = false;
 /// Set when the game closes from the panic screen: nothing from the game is
 /// printed on exit, so the disguise holds.
 var closed_hidden = false;
@@ -21,7 +28,11 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "--mute")) muted = true;
         if (std.mem.eql(u8, arg, "--no-title")) no_title = true;
     }
-    if (!muted) bank.init();
+    if (!muted) {
+        bank.init();
+        music.start(sound.synthMusic(&music_buf, sound.dungeon_theme));
+    }
+    defer music.stop();
 
     // Read each key as it is pressed, without Enter and without echo.
     const raw = term.RawMode.enable();
@@ -113,6 +124,8 @@ pub fn main(init: std.process.Init) !void {
 /// Plays one run until the hero dies or flees. Returns true when the whole
 /// game must close: Ctrl+C or the end of the input.
 fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bool {
+    setDungeon(true);
+    defer setDungeon(false);
     while (game.state == .playing) {
         try drawFrame(out, game, .{ .color = true });
 
@@ -127,6 +140,13 @@ fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bo
         }
         // Enter and tab do nothing on the map.
         if (std.ascii.isWhitespace(key)) continue;
+        // m turns the music off or on; no turn is used.
+        if (std.ascii.toLower(key) == brewdungeon.music_key) {
+            music_on = !music_on;
+            updateMusic();
+            game.message = if (music_on) "Music on." else "Music off. Press m to turn it on.";
+            continue;
+        }
         // Ctrl+C closes the game through the normal path, so the terminal
         // is restored.
         if (key == ctrl_c) {
@@ -164,7 +184,7 @@ fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bo
             game.step(cmd);
             try afterTurn(io, out, game);
         } else {
-            game.message = "Invalid command. Use w/a/s/d or arrows, ., i, 1-9 or q.";
+            game.message = "Invalid command. Use w/a/s/d or arrows, ., i, 1-9, m or q.";
         }
     }
     return false;
@@ -187,6 +207,8 @@ var disguise: brewdungeon.Disguise = .{};
 /// brings the game back. Returns true when the game must close (Ctrl+C or
 /// the end of the input), and then nothing from the game is printed on exit.
 fn panicScreen(in: *Io.Reader, out: *Io.Writer) !bool {
+    // Music would give the disguise away: silent until Esc.
+    music.setPlaying(false);
     try out.writeAll("\x1b[2J");
     try disguise.render(out);
     try out.writeAll("\x1b[?25h"); // show the cursor, like a real editor
@@ -200,6 +222,7 @@ fn panicScreen(in: *Io.Reader, out: *Io.Writer) !bool {
             },
             .escape => {
                 try out.writeAll("\x1b[?25l"); // hide it again for the game
+                updateMusic();
                 return false;
             },
             .backspace, .enter, .other => {
@@ -224,6 +247,16 @@ fn leaveScreen(out: *Io.Writer) !void {
 }
 
 const readKey = brewdungeon.readKey;
+
+fn setDungeon(on: bool) void {
+    in_dungeon = on;
+    updateMusic();
+}
+
+/// Plays the music only in the dungeon, and only if the player wants it.
+fn updateMusic() void {
+    if (!muted) music.setPlaying(in_dungeon and music_on);
+}
 
 fn playSfx(sfx: sound.Sfx) void {
     if (!muted) sound.play(bank.get(sfx));

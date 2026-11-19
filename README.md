@@ -20,7 +20,7 @@ DUNGEON  Level 1   HP 10/10   Gold 0
 ###############################
 
 Find the stairs (>)! Beware of the monsters (M).
-[w/a/s/d] move  [.] wait  [i] inventory  [q] quit
+[w/a/s/d] move  [.] wait  [i] inventory  [m] music  [q] quit
 ```
 
 ## Requirements
@@ -64,6 +64,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `.` | wait       |
 | `i` | open the inventory (does not use a turn; any key other than a number closes it) |
 | `1`-`9` | use the item with that number in the inventory (uses a turn), from the inventory or the map |
+| `m` | turn the dungeon music off or on (does not use a turn) |
 | `q` | give up the run (back to the title; Ctrl+C closes the whole game) |
 | Space | **panic button**: hides the game behind a fake code editor, on any screen. Type anything and it looks like you are programming: every key writes the next letter of ready-made Python code, colored like an IDE (with auto-indent), Enter ends the line and Backspace erases. **Esc** brings the game back (nothing is lost, no turn is used) |
 
@@ -139,6 +140,8 @@ Press a key. It acts at once, with no need to press **Enter**:
 
 On Windows the game plays retro sound effects for strikes, kills, damage, gold, stairs, shopping and defeat. They are synthesized in code (square waves, noise and pitch sweeps) into in-memory WAV files, so there are no audio assets or libraries. On other systems the game is silent.
 
+While you are in the dungeon a quiet chiptune soundtrack loops in the background (a melody and a bass line in A minor, also synthesized in code). It stops on the title, the end-of-run screen and the panic screen. Press `m` during a run to turn it off or on; the sound effects keep playing either way.
+
 To play without sound:
 
 ```sh
@@ -152,7 +155,7 @@ zig build run -- --mute
 zig build test --summary all
 ```
 
-The tests cover command parsing, movement, combat, monster AI, level changes, winning and losing, the visual effects (strike spark, colors, flash and shake), and the sound synthesizer (WAV header, durations, fade-out and deterministic noise). One test checks that every level has a path from the start to the stairs.
+The tests cover command parsing, movement, combat, monster AI, level changes, winning and losing, the visual effects (strike spark, colors, flash and shake), and the sound synthesizer (WAV header, durations, fade-out, deterministic noise and the soundtrack loop). One test checks that every level has a path from the start to the stairs.
 
 ## Project layout
 
@@ -160,7 +163,7 @@ The tests cover command parsing, movement, combat, monster AI, level changes, wi
 build.zig       build script (run and test steps)
 build.zig.zon   package manifest
 src/root.zig    pure game logic (map, turns, monsters, rendering) and its tests
-src/sound.zig   sound effect synthesizer (in-memory WAV) and Windows playback
+src/sound.zig   sound effect and music synthesizer (in-memory WAV) and Windows playback
 src/main.zig    entry point: input/output loop, animations and sound
 ```
 

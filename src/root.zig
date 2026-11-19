@@ -2565,7 +2565,7 @@ pub const Game = struct {
             }
         }
         if (g.state == .playing) {
-            try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [q] quit\n");
+            try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [m] music  [q] quit\n");
         }
     }
 
@@ -2690,6 +2690,10 @@ pub const Game = struct {
         }
     }
 };
+
+/// The key that turns the dungeon music off or on during a run. It is not a
+/// game command, so it uses no turn (`main.zig` handles it).
+pub const music_key = 'm';
 
 // ---------------------------------------------------------- panic button
 
@@ -3448,6 +3452,21 @@ test "space is the panic key, not a game command" {
     var t: Title = .{ .selected = .quit };
     try testing.expectEqual(@as(?TitleChoice, null), t.key(panic_key));
     try testing.expectEqual(TitleChoice.quit, t.selected);
+}
+
+test "m is not a game command, so it can toggle the music" {
+    try testing.expectEqual(@as(u8, 'm'), music_key);
+    try testing.expectEqual(@as(?Command, null), parseCommand(&.{music_key}));
+    try testing.expectEqual(@as(?Command, null), parseCommand("M"));
+}
+
+test "the help line shows the music key" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = Game.init(prng.random());
+    var buf: [16 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.render(&w, .{});
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "[m] music") != null);
 }
 
 test "a single key acts at once, so the screens never ask for Enter" {

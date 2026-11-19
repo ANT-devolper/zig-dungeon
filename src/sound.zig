@@ -143,7 +143,18 @@ pub fn synth(buf: []u8, notes: []const Note) []u8 {
     std.debug.assert(buf.len >= total);
     writeHeader(buf[0..header_len], total - header_len);
 
-    var i: usize = header_len;
+    writeNotes(buf[header_len..total], notes, .set);
+    return buf[0..total];
+}
+
+/// How `writeNotes` stores each sample: `set` overwrites the buffer, `add`
+/// mixes the notes into what is already there (clamped to 0..255).
+const WriteMode = enum { set, add };
+
+/// Synthesizes `notes` as raw 8-bit samples into `out`, which must hold
+/// exactly their samples.
+fn writeNotes(out: []u8, notes: []const Note, mode: WriteMode) void {
+    var i: usize = 0;
     var noise: u32 = 0x1234_5678; // fixed seed: same sound every time
     for (notes) |n| {
         const count = samplesFor(n.ms);
@@ -168,11 +179,122 @@ pub fn synth(buf: []u8, notes: []const Note) []u8 {
                 },
             };
             const envelope = n.volume * (1 - t);
-            buf[i] = @intFromFloat(@round(@as(f32, silence) + 127 * value * envelope));
+            const base: f32 = switch (mode) {
+                .set => silence,
+                .add => @floatFromInt(out[i]),
+            };
+            const sample = @round(base + 127 * value * envelope);
+            out[i] = @intFromFloat(std.math.clamp(sample, 0, 255));
             i += 1;
         }
     }
-    return buf[0..total];
+    std.debug.assert(i == out.len);
+}
+
+// ---------------------------------------------------------------- music
+
+/// A looping background tune: two voices played at the same time. Both
+/// must last exactly as long.
+pub const Music = struct {
+    melody: []const Note,
+    bass: []const Note,
+};
+
+/// Length of one eighth note in the music, in ms.
+const eighth = 200;
+
+fn mel(freq: f32, eighths: u32) Note {
+    return .{ .freq_start = freq, .ms = eighths * eighth, .volume = if (freq == 0) 0 else 0.16 };
+}
+
+fn rest(eighths: u32) Note {
+    return mel(0, eighths);
+}
+
+/// One bar of bass in quarter notes: root, fifth, octave, fifth.
+fn bassBar(root: f32, fifth: f32) [4]Note {
+    const n = struct {
+        fn q(f: f32) Note {
+            return .{ .freq_start = f, .ms = 2 * eighth, .volume = 0.14 };
+        }
+    }.q;
+    return .{ n(root), n(fifth), n(root * 2), n(fifth) };
+}
+
+// Note frequencies (Hz).
+const A2 = 110.0;
+const B2 = 123.47;
+const C3 = 130.81;
+const D2 = 73.42;
+const D3 = 146.83;
+const E2 = 82.41;
+const E3 = 164.81;
+const F2 = 87.31;
+const G2 = 98.0;
+const E4 = 329.63;
+const F4 = 349.23;
+const G4 = 392.0;
+const Gs4 = 415.3;
+const A4 = 440.0;
+const B4 = 493.88;
+const C5 = 523.25;
+const D5 = 587.33;
+const E5 = 659.25;
+const F5 = 698.46;
+const G5 = 783.99;
+const A5 = 880.0;
+
+/// The dungeon theme: 8 bars in A minor (Am F G E Am F Dm E), 12.8 s,
+/// quiet so the sound effects stay on top. It ends on a rest, so the loop
+/// joins without a click.
+pub const dungeon_theme: Music = .{
+    .melody = &[_]Note{
+        // Am
+        mel(E4, 1), mel(A4, 1),  mel(C5, 1), mel(E5, 1), mel(D5, 1), mel(C5, 1), mel(B4, 1), mel(C5, 1),
+        // F
+        mel(A4, 2), mel(F4, 1),  mel(A4, 1), mel(C5, 2), rest(2),
+        // G
+           mel(B4, 1), mel(D5, 1), mel(G5, 1),
+        mel(D5, 1), mel(B4, 1),  mel(G4, 1), mel(B4, 1), mel(D5, 1),
+        // E
+        mel(E5, 2), mel(D5, 1), mel(C5, 1),
+        mel(B4, 2), mel(Gs4, 2),
+        // Am
+        mel(A4, 1), mel(C5, 1), mel(E5, 1), mel(A5, 1), mel(G5, 1), mel(E5, 1),
+        mel(C5, 1), mel(E5, 1),
+        // F
+         mel(F5, 2), mel(E5, 1), mel(D5, 1), mel(C5, 2), mel(A4, 2),
+        // Dm
+        mel(D5, 1),
+        mel(F5, 1), mel(A5, 1),  mel(F5, 1), mel(E5, 1), mel(D5, 1), mel(C5, 1), mel(B4, 1),
+        // E
+        mel(Gs4, 2),
+        mel(B4, 1), mel(E5, 1),  rest(4),
+    },
+    .bass = &(bassBar(A2, E3) ++ bassBar(F2, C3) ++ bassBar(G2, D3) ++ bassBar(E2, B2) ++
+        bassBar(A2, E3) ++ bassBar(F2, C3) ++ bassBar(D2, A2) ++ bassBar(E2, B2)),
+};
+
+fn samplesIn(notes: []const Note) usize {
+    var n: usize = 0;
+    for (notes) |note| n += samplesFor(note.ms);
+    return n;
+}
+
+/// Number of raw samples (= bytes) in one loop of `m`.
+pub fn musicLen(m: Music) usize {
+    return samplesIn(m.melody);
+}
+
+/// Synthesizes one loop of `m` as raw 8-bit mono samples (no WAV header):
+/// the melody first, then the bass mixed on top. `buf` must hold at least
+/// `musicLen(m)` bytes.
+pub fn synthMusic(buf: []u8, m: Music) []u8 {
+    const len = musicLen(m);
+    std.debug.assert(samplesIn(m.bass) == len);
+    writeNotes(buf[0..len], m.melody, .set);
+    writeNotes(buf[0..len], m.bass, .add);
+    return buf[0..len];
 }
 
 const sfx_count = std.enums.values(Sfx).len;
@@ -220,6 +342,103 @@ pub fn play(wav: []const u8) void {
     }
 }
 
+// ------------------------------------------------------- music playback
+//
+// `PlaySoundA` plays one sound at a time, so a sound effect would cut the
+// music off. The music uses the waveOut API instead: its own stream, which
+// Windows mixes with the sound effects, looped by the driver.
+
+const WAVE_MAPPER: u32 = 0xFFFF_FFFF;
+const CALLBACK_NULL = 0;
+const WHDR_BEGINLOOP = 0x04;
+const WHDR_ENDLOOP = 0x08;
+
+const WaveFormatEx = extern struct {
+    wFormatTag: u16,
+    nChannels: u16,
+    nSamplesPerSec: u32,
+    nAvgBytesPerSec: u32,
+    nBlockAlign: u16,
+    wBitsPerSample: u16,
+    cbSize: u16,
+};
+
+const WaveHdr = extern struct {
+    lpData: [*]u8,
+    dwBufferLength: u32,
+    dwBytesRecorded: u32 = 0,
+    dwUser: usize = 0,
+    dwFlags: u32 = 0,
+    dwLoops: u32 = 0,
+    lpNext: ?*WaveHdr = null,
+    reserved: usize = 0,
+};
+
+const HWaveOut = *anyopaque;
+
+extern "winmm" fn waveOutOpen(phwo: *?HWaveOut, device: u32, fmt: *const WaveFormatEx, callback: usize, instance: usize, flags: u32) callconv(.winapi) u32;
+extern "winmm" fn waveOutPrepareHeader(hwo: HWaveOut, hdr: *WaveHdr, size: u32) callconv(.winapi) u32;
+extern "winmm" fn waveOutUnprepareHeader(hwo: HWaveOut, hdr: *WaveHdr, size: u32) callconv(.winapi) u32;
+extern "winmm" fn waveOutWrite(hwo: HWaveOut, hdr: *WaveHdr, size: u32) callconv(.winapi) u32;
+extern "winmm" fn waveOutPause(hwo: HWaveOut) callconv(.winapi) u32;
+extern "winmm" fn waveOutRestart(hwo: HWaveOut) callconv(.winapi) u32;
+extern "winmm" fn waveOutReset(hwo: HWaveOut) callconv(.winapi) u32;
+extern "winmm" fn waveOutClose(hwo: HWaveOut) callconv(.winapi) u32;
+
+/// Loops raw 8-bit mono samples in the background, paused or playing.
+/// It must outlive playback (the driver reads `header` and the samples),
+/// so keep it in a global. Does nothing outside Windows or when the audio
+/// device cannot be opened.
+pub const MusicPlayer = struct {
+    handle: ?HWaveOut = null,
+    header: WaveHdr = undefined,
+
+    /// Queues `samples` to loop forever, starting paused.
+    pub fn start(p: *MusicPlayer, samples: []u8) void {
+        if (builtin.os.tag != .windows) return;
+        const fmt: WaveFormatEx = .{
+            .wFormatTag = 1, // PCM
+            .nChannels = 1,
+            .nSamplesPerSec = sample_rate,
+            .nAvgBytesPerSec = sample_rate,
+            .nBlockAlign = 1,
+            .wBitsPerSample = 8,
+            .cbSize = 0,
+        };
+        var h: ?HWaveOut = null;
+        if (waveOutOpen(&h, WAVE_MAPPER, &fmt, 0, 0, CALLBACK_NULL) != 0) return;
+        const hwo = h orelse return;
+        _ = waveOutPause(hwo); // nothing plays until setPlaying(true)
+        p.header = .{ .lpData = samples.ptr, .dwBufferLength = @intCast(samples.len) };
+        if (waveOutPrepareHeader(hwo, &p.header, @sizeOf(WaveHdr)) != 0) {
+            _ = waveOutClose(hwo);
+            return;
+        }
+        // The loop flags go on after preparing, which needs them cleared.
+        p.header.dwFlags |= WHDR_BEGINLOOP | WHDR_ENDLOOP;
+        p.header.dwLoops = std.math.maxInt(u32);
+        _ = waveOutWrite(hwo, &p.header, @sizeOf(WaveHdr));
+        p.handle = hwo;
+    }
+
+    /// Pauses or resumes the loop where it was.
+    pub fn setPlaying(p: *MusicPlayer, playing: bool) void {
+        if (builtin.os.tag != .windows) return;
+        const hwo = p.handle orelse return;
+        _ = if (playing) waveOutRestart(hwo) else waveOutPause(hwo);
+    }
+
+    /// Stops the music and frees the audio device.
+    pub fn stop(p: *MusicPlayer) void {
+        if (builtin.os.tag != .windows) return;
+        const hwo = p.handle orelse return;
+        _ = waveOutReset(hwo);
+        _ = waveOutUnprepareHeader(hwo, &p.header, @sizeOf(WaveHdr));
+        _ = waveOutClose(hwo);
+        p.handle = null;
+    }
+};
+
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
@@ -266,6 +485,42 @@ test "noise is deterministic" {
     var a: [max_wav_len]u8 = undefined;
     var b: [max_wav_len]u8 = undefined;
     try testing.expectEqualSlices(u8, synth(&a, Sfx.strike.notes()), synth(&b, Sfx.strike.notes()));
+}
+
+test "the dungeon theme's two voices last exactly as long" {
+    var melody_ms: u32 = 0;
+    for (dungeon_theme.melody) |n| melody_ms += n.ms;
+    var bass_ms: u32 = 0;
+    for (dungeon_theme.bass) |n| bass_ms += n.ms;
+    try testing.expectEqual(melody_ms, bass_ms);
+    try testing.expectEqual(@as(u32, 64 * eighth), melody_ms);
+}
+
+var test_music: [musicLen(dungeon_theme)]u8 = undefined;
+var test_music2: [musicLen(dungeon_theme)]u8 = undefined;
+
+test "music loop length matches its duration" {
+    const samples = synthMusic(&test_music, dungeon_theme);
+    try testing.expectEqual(samplesFor(64 * eighth), samples.len);
+}
+
+test "music loop ends in silence so it joins without a click" {
+    const samples = synthMusic(&test_music, dungeon_theme);
+    for (samples[samples.len - 100 ..]) |s| {
+        try testing.expect(@abs(@as(i16, s) - silence) <= 3);
+    }
+}
+
+test "music mixes both voices" {
+    const both = synthMusic(&test_music, dungeon_theme);
+    const melody_only = synthMusic(&test_music2, .{ .melody = dungeon_theme.melody, .bass = &.{.{ .ms = 64 * eighth, .volume = 0 }} });
+    try testing.expect(!std.mem.eql(u8, both, melody_only));
+    // Both voices together swing wider than the melody alone.
+    try testing.expect(std.mem.max(u8, both) > std.mem.max(u8, melody_only));
+}
+
+test "music synthesis is deterministic" {
+    try testing.expectEqualSlices(u8, synthMusic(&test_music, dungeon_theme), synthMusic(&test_music2, dungeon_theme));
 }
 
 test "bank holds every sound effect" {
