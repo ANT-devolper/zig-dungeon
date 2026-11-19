@@ -75,6 +75,39 @@ const totem_chance = 10;
 /// Chance (in %) that a totem heals completely; otherwise it curses.
 const totem_heal_chance = 60;
 
+// The rival adventurer (see `Rival`). User rules: it never exists before
+// level 5, one rival per run, `@` in magenta, and the hunt chance grows as
+// the hero's HP drops while weighing the rival's own HP. Numbers: my picks.
+/// First level the rival can show up on, its chance per maze level, and
+/// the level where it always shows up if it has not yet.
+const rival_first_level = 5;
+const rival_chance = 40;
+const rival_sure_level = 7;
+pub const rival_max_hp = 10;
+const rival_damage = 2;
+const rival_start_gold = 20;
+/// How far the rival sees the hero (Manhattan distance, walls block).
+const rival_sight = 5;
+/// The rival drinks a health potion at or below this HP.
+const rival_low_hp = 4;
+/// At or below this HP the rival never hunts the hero.
+const rival_flee_hp = 3;
+/// The hunt chance (in %): `rival_hunt_base` plus the hero's missing HP %
+/// weighted by the rival's HP %, capped at `rival_hunt_max`.
+const rival_hunt_base = 5;
+const rival_hunt_max = 90;
+/// Rounds the rival needs for a level while off screen.
+const rival_level_rounds_min = 40;
+const rival_level_rounds_max = 80;
+/// Rounds before a rival met "behind" comes down to the hero's level.
+const rival_arrive_min = 10;
+const rival_arrive_max = 30;
+/// Damage the rival takes on each level it crosses off screen.
+const rival_away_damage_min = 1;
+const rival_away_damage_max = 3;
+/// The rival walks to gold or chests this many steps away (or closer).
+const rival_loot_reach = 6;
+
 /// Potion kinds the hero can carry: three sizes of health potion, three
 /// sizes of strength potion, plus the time stop, speed, vision,
 /// invisibility and mystery potions, which are single kinds with no sizes.
@@ -215,6 +248,9 @@ pub const Tile = enum {
     offering,
     /// Maze level: walking over it heals completely or curses.
     totem,
+    /// What the monsters left of the rival: walking over it gives the
+    /// rival's gold and potions.
+    remains,
 };
 
 pub const Pos = struct {
@@ -387,6 +423,56 @@ pub const Monster = struct {
     /// True if this monster bit the hero during the last turn.
     bit: bool = false,
 };
+
+/// Where the rival adventurer is.
+pub const RivalStatus = enum {
+    /// Not met yet (it never exists before `rival_first_level`).
+    none,
+    /// On the hero's map, acting every round (`rivalTurn`).
+    here,
+    /// Off screen on `Rival.level`: ahead when it is deeper than the hero,
+    /// behind otherwise. `rounds_left` counts down to the next level.
+    away,
+    /// Gone for the rest of the run (one rival per run).
+    dead,
+};
+
+/// Another adventurer racing the hero down the dungeon. It goes for the
+/// stairs, takes loot, drinks potions, fights monsters and may hunt the hero.
+pub const Rival = struct {
+    status: RivalStatus = .none,
+    /// The level it is on (or died on).
+    level: u32 = 0,
+    pos: Pos = .{ .x = 0, .y = 0 },
+    hp: i32 = rival_max_hp,
+    max_hp: i32 = rival_max_hp,
+    /// Its gold and potions (the hero gets them when it dies).
+    inventory: Inventory = .{},
+    /// Rounds left with the strength bonus, and the bonus.
+    strength: u8 = 0,
+    strength_bonus: i32 = 0,
+    /// It decided to kill the hero (see `huntChance`).
+    hunting: bool = false,
+    /// It saw the hero last round, and the hero's HP when it last rolled.
+    saw_hero: bool = false,
+    seen_hero_hp: i32 = 0,
+    /// Off screen: rounds left to finish `level`, and the total (progress).
+    rounds_left: u16 = 0,
+    rounds_total: u16 = 1,
+    /// True if it hit the hero during the last turn.
+    bit: bool = false,
+};
+
+/// The chance (in %) that the rival starts hunting the hero when it sees
+/// them: it grows with the hero's missing HP, weighted by the rival's own
+/// HP, and is 0 when the rival is nearly dead itself (a user rule).
+pub fn huntChance(hero_hp: i32, hero_max_hp: i32, rival_hp: i32, rival_max: i32) u32 {
+    if (rival_hp <= rival_flee_hp) return 0;
+    const missing = 100 - @divTrunc(@max(hero_hp, 0) * 100, hero_max_hp);
+    const health = @divTrunc(rival_hp * 100, rival_max);
+    const chance = rival_hunt_base + @divTrunc(missing * health, 100);
+    return @intCast(@min(rival_hunt_max, @max(0, chance)));
+}
 
 /// How to draw a frame. The defaults produce plain text with no ANSI codes.
 pub const RenderOptions = struct {
@@ -755,6 +841,17 @@ pub const Game = struct {
     last_totem_level: ?u32 = null,
     /// The curse a totem gave during the last turn, if any.
     totem_curse: ?Curse = null,
+    /// The rival adventurer (see `Rival`).
+    rival: Rival = .{},
+    /// Where the hero started the current level; a rival coming from
+    /// behind comes in here.
+    entry: Pos = .{ .x = 1, .y = 1 },
+    /// What the rival did during the last turn, shown on its own line
+    /// (static strings only, like `message`).
+    rival_message: []const u8 = "",
+    /// Gold and potions the hero took from the rival during the last turn.
+    rival_loot_gold: u32 = 0,
+    rival_loot_potions: u32 = 0,
     events: Events = .{},
     rng: std.Random,
 
@@ -776,6 +873,8 @@ pub const Game = struct {
         g.spawnLoot();
         g.spawnTotem();
         g.spawnMonsters(@min(max_monsters, 1 + n * 2));
+        g.entry = g.hero;
+        g.rivalOnNewLevel();
     }
 
     /// Makes level `n` a shop: one lit room with the shopkeeper, two potions
@@ -811,6 +910,7 @@ pub const Game = struct {
             while (x <= shop_room.x1) : (x += 1) g.setTile(.{ .x = x, .y = y }, .floor);
         }
         g.hero = shop_hero_start;
+        g.entry = g.hero;
         g.setTile(shop_stairs, .stairs);
     }
 
@@ -824,6 +924,7 @@ pub const Game = struct {
     /// when it fires, it is a fountain `fountain_chance`% of the time.
     fn nextLevel(g: *Game) void {
         const n = g.level + 1;
+        g.rivalLeftBehind();
         if (g.inRoom() or g.level % 2 != 0) return g.loadLevel(n);
         if (g.shop_skip) {
             g.shop_skip = false; // the chance after a shop or fountain is skipped
@@ -953,13 +1054,18 @@ pub const Game = struct {
     /// holds either a potion or gold, never both. Chest tiles and the clear
     /// reward use it.
     fn openChest(g: *Game) ChestLoot {
+        return g.rollChest(&g.inventory);
+    }
+
+    /// One chest roll into `inv` (the hero's or the rival's).
+    fn rollChest(g: *Game, inv: *Inventory) ChestLoot {
         if (g.rng.uintLessThan(u8, 100) < chest_potion_chance) {
             const kind = g.randomPotion();
-            g.inventory.add(kind);
+            inv.add(kind);
             return .{ .potion = kind };
         }
         const gold = g.rng.intRangeAtMost(u32, chest_gold_min, chest_gold_max);
-        g.inventory.gold += gold;
+        inv.gold += gold;
         return .{ .gold = gold };
     }
 
@@ -1188,10 +1294,16 @@ pub const Game = struct {
                     '~' => .fountain,
                     '+' => .offering,
                     'Y' => .totem,
+                    '%' => .remains,
                     else => .floor,
                 };
                 switch (c) {
-                    '@' => g.hero = p,
+                    '@' => {
+                        g.hero = p;
+                        g.entry = p;
+                    },
+                    // Tests only: the rival, on the hero's map.
+                    'A' => g.rival = .{ .status = .here, .level = g.level, .pos = p },
                     'M' => g.addMonster(p, .monster),
                     'r' => g.addMonster(p, .rat),
                     'S' => g.addMonster(p, .slime),
@@ -1227,7 +1339,7 @@ pub const Game = struct {
                 .x = g.rng.intRangeLessThan(i32, 1, W - 1),
                 .y = g.rng.intRangeLessThan(i32, 1, H - 1),
             };
-            if (g.tileAt(p) == .floor and !p.eql(g.hero) and g.monsterAt(p) == null) return p;
+            if (g.tileAt(p) == .floor and !p.eql(g.hero) and g.monsterAt(p) == null and !g.rivalAt(p)) return p;
         }
     }
 
@@ -1345,6 +1457,10 @@ pub const Game = struct {
         g.totem_curse = null;
         g.mystery_potion = null;
         g.mystery_curse = null;
+        g.rival_message = "";
+        g.rival_loot_gold = 0;
+        g.rival_loot_potions = 0;
+        g.rival.bit = false;
         for (g.monsters[0..g.monster_count]) |*m| m.bit = false;
 
         // Paralysis (a curse) turns the next action into a lost turn;
@@ -1375,19 +1491,7 @@ pub const Game = struct {
             .up, .down, .left, .right => {
                 const target = g.hero.add(action.delta());
                 if (g.monsterAt(target)) |i| {
-                    // A monster that cannot see the hero (invisible) or
-                    // cannot act (time stop) takes a sneak attack.
-                    const sneak = g.isSneaky();
-                    // Attacking gives the hero away: the invisibility ends
-                    // and the monsters act normally this round. Time stop
-                    // goes on.
-                    if (g.invisible > 0) {
-                        g.invisible = 0;
-                        g.invisible_fresh = false;
-                        g.revealed = true;
-                    }
-                    const damage = g.attackDamage() * @as(i32, if (sneak) sneak_multiplier else 1);
-                    if (sneak) g.sneak_damage = damage; // render() appends it
+                    const damage = g.heroStrike();
                     g.monsters[i].hp -= damage;
                     g.hit_pos = target;
                     const kind = g.monsters[i].kind;
@@ -1416,6 +1520,20 @@ pub const Game = struct {
                     } else {
                         g.message = kind.hitMessage();
                     }
+                } else if (g.rivalAt(target)) {
+                    g.hit_pos = target;
+                    g.rival.hp -= g.heroStrike();
+                    if (g.rival.hp <= 0) {
+                        g.hit_killed = true;
+                        g.rival.status = .dead;
+                        g.takeRivalLoot(); // render() appends what it carried
+                        g.message = "You defeated your rival!";
+                    } else {
+                        // Attacked, it hunts the hero for sure, unless it
+                        // is nearly dead itself.
+                        if (g.rival.hp > rival_flee_hp) g.rival.hunting = true;
+                        g.message = "You hit your rival!";
+                    }
                 } else if (g.isShopkeeper(target)) {
                     g.message = "The shopkeeper smiles. Walk over an item to buy it.";
                 } else switch (g.tileAt(target)) {
@@ -1428,6 +1546,12 @@ pub const Game = struct {
                     .totem => {
                         g.hero = target;
                         g.touchTotem(target);
+                    },
+                    .remains => {
+                        g.hero = target;
+                        g.setTile(target, .floor);
+                        g.takeRivalLoot(); // render() appends what it held
+                        g.message = "You search your rival's remains.";
                     },
                     .floor => {
                         g.hero = target;
@@ -1508,7 +1632,11 @@ pub const Game = struct {
         tickCurse(&g.slow, &g.slow_fresh);
         tickCurse(&g.blind, &g.blind_fresh);
         tickCurse(&g.confused, &g.confused_fresh);
+        // The rival races on off screen even while time is stopped here.
+        if (g.rival.status == .away) g.rivalAwayRound();
         if (!frozen) {
+            if (g.rival.status == .here) g.rivalTurn(hidden);
+            if (g.state != .playing) return;
             g.monstersTurn(hidden);
             if (slow and g.state == .playing) g.monstersTurn(hidden);
         }
@@ -1527,6 +1655,388 @@ pub const Game = struct {
     /// Damage the hero's attack deals, including any strength bonus.
     pub fn attackDamage(g: *const Game) i32 {
         return hero_damage + g.strength_bonus;
+    }
+
+    /// The damage of the hero's attack on a monster or the rival. A target
+    /// that cannot see the hero (invisible) or cannot act (time stop) takes
+    /// a sneak attack. Attacking gives the hero away: the invisibility ends
+    /// and the monsters act normally this round. Time stop goes on.
+    fn heroStrike(g: *Game) i32 {
+        const sneak = g.isSneaky();
+        if (g.invisible > 0) {
+            g.invisible = 0;
+            g.invisible_fresh = false;
+            g.revealed = true;
+        }
+        const damage = g.attackDamage() * @as(i32, if (sneak) sneak_multiplier else 1);
+        if (sneak) g.sneak_damage = damage; // render() appends it
+        return damage;
+    }
+
+    // ----- The rival adventurer -----
+
+    /// True if the rival stands on `p` on the hero's map.
+    pub fn rivalAt(g: *const Game, p: Pos) bool {
+        return g.rival.status == .here and g.rival.pos.eql(p);
+    }
+
+    /// The hero can see the rival right now.
+    pub fn rivalSeen(g: *const Game) bool {
+        if (g.rival.status != .here) return false;
+        if (g.hasVision() or g.inRoom()) return true;
+        const p = g.rival.pos;
+        return g.visibility()[@intCast(p.y)][@intCast(p.x)];
+    }
+
+    /// The rival's attack damage (its strength bonus included).
+    fn rivalDamage(g: *const Game) i32 {
+        return rival_damage + g.rival.strength_bonus;
+    }
+
+    /// The hero takes everything the dead rival carried.
+    fn takeRivalLoot(g: *Game) void {
+        const inv = &g.rival.inventory;
+        g.inventory.gold += inv.gold;
+        g.rival_loot_gold = inv.gold;
+        for (std.enums.values(Potion)) |p| {
+            for (0..inv.potionCount(p)) |_| g.inventory.add(p);
+            g.rival_loot_potions += inv.potionCount(p);
+        }
+        inv.* = .{};
+    }
+
+    /// A new level was loaded: the rival may show up for the first time,
+    /// or it got here first (it is ahead).
+    fn rivalOnNewLevel(g: *Game) void {
+        switch (g.rival.status) {
+            .none => g.maybeMeetRival(),
+            .away => if (g.rival.level == g.level) {
+                const r = &g.rival;
+                const left: u32 = @min(r.rounds_left, r.rounds_total);
+                g.placeRivalAhead(100 - left * 100 / r.rounds_total);
+                g.rival_message = "Your rival is already here!";
+            },
+            .here, .dead => {},
+        }
+    }
+
+    /// From `rival_first_level` on, every maze level has `rival_chance`% of
+    /// bringing the rival (always at `rival_sure_level`): half the time it
+    /// is already on the level, ahead; otherwise it comes down later.
+    fn maybeMeetRival(g: *Game) void {
+        if (g.level < rival_first_level) return;
+        if (g.level < rival_sure_level and g.rng.uintLessThan(u8, 100) >= rival_chance) return;
+        g.rival = .{ .status = .away, .level = g.level };
+        g.rival.inventory.gold = rival_start_gold;
+        g.rival.inventory.add(.small);
+        if (g.rng.boolean()) {
+            g.placeRivalAhead(g.rng.intRangeAtMost(u32, 20, 70));
+            g.rival_message = "Another adventurer races you to the stairs!";
+        } else {
+            g.rival.level = g.level - 1;
+            const rounds = g.rng.intRangeAtMost(u16, rival_arrive_min, rival_arrive_max);
+            g.rival.rounds_left = rounds;
+            g.rival.rounds_total = rounds;
+        }
+    }
+
+    /// Puts the rival on the map `progress`% of the way from the hero to
+    /// the stairs, at least `monster_safe_distance` from the hero.
+    fn placeRivalAhead(g: *Game, progress: u32) void {
+        const dist = g.distanceMap(g.hero);
+        const stairs = g.stairsPos() orelse return;
+        const stairs_dist: u32 = dist[@intCast(stairs.y)][@intCast(stairs.x)] orelse 0;
+        const goal = stairs_dist * progress / 100;
+        var best: ?Pos = null;
+        var best_gap: u32 = std.math.maxInt(u32);
+        for (0..H) |y| for (0..W) |x| {
+            const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
+            const d: u32 = dist[y][x] orelse continue;
+            if (g.map[y][x] != .floor or g.monsterAt(p) != null) continue;
+            if (p.manhattan(g.hero) < monster_safe_distance) continue;
+            const gap = if (d > goal) d - goal else goal - d;
+            if (gap < best_gap) {
+                best = p;
+                best_gap = gap;
+            }
+        };
+        g.rival.status = .here;
+        g.rival.level = g.level;
+        g.rival.pos = best orelse g.monsterSpawnSpot();
+        g.rival.hunting = false;
+        g.rival.saw_hero = false;
+    }
+
+    /// The stairs of the current map, if any.
+    fn stairsPos(g: *const Game) ?Pos {
+        for (0..H) |y| for (0..W) |x| {
+            if (g.map[y][x] == .stairs) return .{ .x = @intCast(x), .y = @intCast(y) };
+        };
+        return null;
+    }
+
+    /// The free floor tile nearest to `from` (walking), for the rival.
+    fn nearestFreeFloor(g: *const Game, from: Pos) ?Pos {
+        const dist = g.distanceMap(from);
+        var best: ?Pos = null;
+        var best_d: u16 = std.math.maxInt(u16);
+        for (0..H) |y| for (0..W) |x| {
+            const p: Pos = .{ .x = @intCast(x), .y = @intCast(y) };
+            const d = dist[y][x] orelse continue;
+            if (d < best_d and g.map[y][x] == .floor and g.isFreeForRival(p)) {
+                best = p;
+                best_d = d;
+            }
+        };
+        return best;
+    }
+
+    /// The hero takes the stairs while the rival is on the map: it stays
+    /// behind, as many rounds from the next level as it is from the stairs.
+    fn rivalLeftBehind(g: *Game) void {
+        if (g.rival.status != .here) return;
+        const stairs = g.stairsPos() orelse g.hero;
+        const dist = g.distanceMap(stairs);
+        const p = g.rival.pos;
+        const steps: u16 = dist[@intCast(p.y)][@intCast(p.x)] orelse 0;
+        const rounds = @max(1, steps + g.rng.uintAtMost(u16, 10));
+        g.rival.status = .away;
+        g.rival.hunting = false;
+        g.rival.saw_hero = false;
+        g.rival.rounds_left = rounds;
+        g.rival.rounds_total = rounds;
+    }
+
+    /// The rival starts a new level off screen.
+    fn newRivalCounter(g: *Game) void {
+        const rounds = g.rng.intRangeAtMost(u16, rival_level_rounds_min, rival_level_rounds_max);
+        g.rival.rounds_left = rounds;
+        g.rival.rounds_total = rounds;
+    }
+
+    /// One round of the rival off screen. When its counter ends it reaches
+    /// the next level; if that is the hero's maze level, it comes in where
+    /// the hero came in. A shop or fountain room is the hero's alone: the
+    /// rival passes through.
+    fn rivalAwayRound(g: *Game) void {
+        const r = &g.rival;
+        if (r.rounds_left > 1) {
+            r.rounds_left -= 1;
+            return;
+        }
+        r.level += 1;
+        g.rivalCrossedLevel();
+        if (r.status == .dead) return;
+        if (r.level == g.level and !g.inRoom()) {
+            if (g.nearestFreeFloor(g.entry)) |p| {
+                r.status = .here;
+                r.pos = p;
+                r.hunting = false;
+                r.saw_hero = false;
+                g.rival_message = "You hear footsteps on the stairs: your rival is here!";
+                return;
+            }
+        }
+        g.newRivalCounter();
+    }
+
+    /// What a level did to the rival off screen: one chest roll, some
+    /// damage (it may die), a health potion if low, and +1 HP of rest.
+    fn rivalCrossedLevel(g: *Game) void {
+        const r = &g.rival;
+        _ = g.rollChest(&r.inventory);
+        r.hp -= g.rng.intRangeAtMost(i32, rival_away_damage_min, rival_away_damage_max);
+        r.strength = 0;
+        r.strength_bonus = 0;
+        if (r.hp <= 0) {
+            r.hp = 0;
+            r.status = .dead;
+            r.inventory = .{}; // lost far away
+            g.rival_message = "A distant scream echoes... your rival is gone.";
+            return;
+        }
+        if (r.hp <= rival_low_hp) _ = g.rivalDrinkHealth();
+        r.hp = @min(r.max_hp, r.hp + 1);
+    }
+
+    /// The rival drinks its largest health potion, if it has one.
+    fn rivalDrinkHealth(g: *Game) bool {
+        const r = &g.rival;
+        for ([_]Potion{ .large, .medium, .small }) |p| {
+            if (r.inventory.potionCount(p) == 0) continue;
+            r.inventory.remove(p);
+            r.hp = @min(r.max_hp, r.hp + p.heal());
+            return true;
+        }
+        return false;
+    }
+
+    /// The rival drinks its largest strength potion, if it has one.
+    fn rivalDrinkStrength(g: *Game) bool {
+        const r = &g.rival;
+        for ([_]Potion{ .strength_large, .strength_medium, .strength_small }) |p| {
+            if (r.inventory.potionCount(p) == 0) continue;
+            r.inventory.remove(p);
+            r.strength_bonus += p.strength();
+            r.strength = strength_turns + 1; // this round's tick is already done
+            return true;
+        }
+        return false;
+    }
+
+    /// A tile the rival may step on: no wall, no monster, not the hero.
+    fn isFreeForRival(g: *const Game, p: Pos) bool {
+        return g.tileAt(p) != .wall and g.monsterAt(p) == null and !p.eql(g.hero);
+    }
+
+    /// The rival can see the hero: close enough, no wall in between, and
+    /// the hero is not invisible.
+    fn rivalSeesHero(g: *const Game, hidden: bool) bool {
+        const p = g.rival.pos;
+        if (hidden or p.manhattan(g.hero) > rival_sight) return false;
+        return g.lineIsClear(p, g.hero) or g.lineIsClear(g.hero, p);
+    }
+
+    /// One round of the rival on the hero's map. In order: drink a health
+    /// potion when low; decide whether to hunt the hero (`huntChance`, rolled
+    /// when it first sees the hero and each time it sees the hero hurt);
+    /// hit the hero when hunting; fight a monster next to it; chase the
+    /// hero; grab loot nearby; otherwise walk to the stairs.
+    fn rivalTurn(g: *Game, hidden: bool) void {
+        const r = &g.rival;
+        if (r.strength > 0) {
+            r.strength -= 1;
+            if (r.strength == 0) r.strength_bonus = 0;
+        }
+        const seen = g.rivalSeen();
+
+        // Hostility.
+        if (g.rivalSeesHero(hidden)) {
+            if (!r.hunting and (!r.saw_hero or g.hp < r.seen_hero_hp)) {
+                const chance = huntChance(g.hp, g.max_hp, r.hp, r.max_hp);
+                r.hunting = g.rng.uintLessThan(u32, 100) < chance;
+            }
+            r.saw_hero = true;
+            r.seen_hero_hp = g.hp;
+        } else {
+            r.saw_hero = false;
+            r.hunting = false;
+        }
+        if (r.hp <= rival_flee_hp) r.hunting = false;
+
+        if (r.hp <= rival_low_hp and g.rivalDrinkHealth()) {
+            if (seen) g.rival_message = "Your rival drinks a health potion.";
+            return;
+        }
+
+        if (r.hunting and r.pos.manhattan(g.hero) == 1) {
+            const dmg = g.rivalDamage();
+            g.hp -= dmg;
+            g.damage_taken += dmg;
+            r.bit = true;
+            g.message = "Your rival stabs you!";
+            if (g.hp <= 0) {
+                g.hp = 0;
+                g.state = .lost;
+                g.events.lost = true;
+                g.message = "Your rival killed you. GAME OVER.";
+            }
+            return;
+        }
+
+        for (directions) |d| {
+            const i = g.monsterAt(r.pos.add(d)) orelse continue;
+            if (g.monsters[i].hp > g.rivalDamage() and g.rivalDrinkStrength()) {
+                if (seen) g.rival_message = "Your rival drinks a strength potion.";
+                return;
+            }
+            g.rivalHitsMonster(i, seen);
+            return;
+        }
+
+        if (r.hunting) return g.rivalStepToward(g.hero, seen);
+
+        // Loot within reach, the nearest first.
+        const dist = g.distanceMap(r.pos);
+        var loot: ?Pos = null;
+        var loot_d: u16 = rival_loot_reach + 1;
+        for (0..H) |y| for (0..W) |x| {
+            const t = g.map[y][x];
+            if (t != .gold and t != .chest) continue;
+            const d = dist[y][x] orelse continue;
+            if (d < loot_d) {
+                loot = .{ .x = @intCast(x), .y = @intCast(y) };
+                loot_d = d;
+            }
+        };
+        if (loot) |p| return g.rivalStepToward(p, seen);
+        if (g.stairsPos()) |p| g.rivalStepToward(p, seen);
+    }
+
+    /// The rival hits monster `i`. A kill follows the hero's rules (a thief's
+    /// gold, a slime's split) but gives the hero no clear reward.
+    fn rivalHitsMonster(g: *Game, i: usize, seen: bool) void {
+        g.monsters[i].hp -= g.rivalDamage();
+        if (g.monsters[i].hp > 0) {
+            if (seen) g.rival_message = "Your rival fights a monster.";
+            return;
+        }
+        const kind = g.monsters[i].kind;
+        const dead_pos = g.monsters[i].pos;
+        g.rival.inventory.gold += g.monsters[i].gold;
+        g.removeMonster(i);
+        if (kind == .slime) _ = g.splitSlime(dead_pos);
+        if (seen) g.rival_message = "Your rival slays a monster.";
+    }
+
+    /// One step of the rival along the shortest path to `goal`. It picks
+    /// up gold and chests it walks over and leaves by the stairs.
+    fn rivalStepToward(g: *Game, goal: Pos, seen: bool) void {
+        const r = &g.rival;
+        const dist = g.distanceMap(goal);
+        var best_d: u16 = dist[@intCast(r.pos.y)][@intCast(r.pos.x)] orelse return;
+        var best: ?Pos = null;
+        for (directions) |d| {
+            const q = r.pos.add(d);
+            if (!g.isFreeForRival(q)) continue;
+            const dq = dist[@intCast(q.y)][@intCast(q.x)] orelse continue;
+            if (dq < best_d) {
+                best = q;
+                best_d = dq;
+            }
+        }
+        const q = best orelse return;
+        r.pos = q;
+        switch (g.tileAt(q)) {
+            .gold => {
+                r.inventory.gold += gold_value;
+                g.setTile(q, .floor);
+                if (seen) g.rival_message = "Your rival grabs the gold!";
+            },
+            .chest => {
+                _ = g.rollChest(&r.inventory);
+                g.setTile(q, .floor);
+                if (seen) g.rival_message = "Your rival opens a chest!";
+            },
+            .stairs => {
+                r.status = .away;
+                r.level = g.level + 1;
+                r.hunting = false;
+                r.saw_hero = false;
+                g.newRivalCounter();
+                if (seen) g.rival_message = "Your rival takes the stairs!";
+            },
+            else => {},
+        }
+    }
+
+    /// The monsters killed the rival on the hero's map: its loot stays on
+    /// its tile as remains.
+    fn rivalKilledByMonsters(g: *Game) void {
+        g.rival.hp = 0;
+        g.rival.status = .dead;
+        g.setTile(g.rival.pos, .remains);
+        g.rival_message = "The monsters killed your rival!";
     }
 
     /// True while the monsters are frozen by a time stop potion.
@@ -1699,6 +2209,13 @@ pub const Game = struct {
     /// within its sight, otherwise wander now and then.
     fn monsterAct(g: *Game, m: *Monster, hidden: bool) void {
         const dist = m.pos.manhattan(g.hero);
+        // A rival on the map is a target too: the nearer one (the hero on
+        // a tie, the rival when the hero is invisible). A thief carrying
+        // gold still only runs from the hero.
+        if (g.rival.status == .here and !(m.kind == .thief and m.gold > 0)) {
+            const rival_dist = m.pos.manhattan(g.rival.pos);
+            if (hidden or rival_dist < dist) return g.monsterVsRival(m, rival_dist);
+        }
         if (hidden) {
             if (g.rng.uintLessThan(u8, 100) < wander_chance) g.wander(m);
         } else if (m.kind == .thief and m.gold > 0) {
@@ -1729,6 +2246,19 @@ pub const Game = struct {
         }
     }
 
+    /// A monster going for the rival: bite it when next to it, chase it
+    /// within sight, otherwise wander now and then.
+    fn monsterVsRival(g: *Game, m: *Monster, dist: u32) void {
+        if (dist == 1) {
+            g.rival.hp -= m.kind.damage();
+            if (g.rival.hp <= 0) g.rivalKilledByMonsters();
+        } else if (dist <= m.kind.sight()) {
+            g.moveMonsterToward(m, g.rival.pos);
+        } else if (g.rng.uintLessThan(u8, 100) < wander_chance) {
+            g.wander(m);
+        }
+    }
+
     /// Takes one step in a random free direction (or stays put if boxed in).
     fn wander(g: *Game, m: *Monster) void {
         var options: [directions.len]Pos = undefined;
@@ -1745,7 +2275,7 @@ pub const Game = struct {
 
     /// A tile a monster may step on: no wall, no other monster, not the hero.
     fn isFreeForMonster(g: *const Game, p: Pos) bool {
-        return g.tileAt(p) != .wall and g.monsterAt(p) == null and !p.eql(g.hero);
+        return g.tileAt(p) != .wall and g.monsterAt(p) == null and !p.eql(g.hero) and !g.rivalAt(p);
     }
 
     /// Whether monster `m` may step on `p`. A ghost also goes through the
@@ -1753,7 +2283,7 @@ pub const Game = struct {
     fn canEnter(g: *const Game, m: *const Monster, p: Pos) bool {
         if (m.kind != .ghost) return g.isFreeForMonster(p);
         const inside = p.x >= 1 and p.y >= 1 and p.x <= W - 2 and p.y <= H - 2;
-        return inside and g.monsterAt(p) == null and !p.eql(g.hero);
+        return inside and g.monsterAt(p) == null and !p.eql(g.hero) and !g.rivalAt(p);
     }
 
     /// Steps to the free tile next to `m` that is farthest from `from`, if
@@ -1880,6 +2410,11 @@ pub const Game = struct {
                     else
                         ansi_cyan;
                     break :blk '@';
+                } else if (g.rivalAt(p)) blk: {
+                    // The rival: a magenta '@' (a user rule), white on red
+                    // when it just hit the hero.
+                    color = if (g.rival.bit) ansi_bite else ansi_magenta;
+                    break :blk '@';
                 } else if (g.isShopkeeper(p)) blk: {
                     color = ansi_shopkeeper;
                     break :blk '@';
@@ -1920,6 +2455,10 @@ pub const Game = struct {
                     .totem => blk: {
                         color = ansi_purple;
                         break :blk 'Y';
+                    },
+                    .remains => blk: {
+                        color = ansi_magenta;
+                        break :blk '%';
                     },
                 };
                 if (opts.color and !opts.flash and color != null) {
@@ -1997,6 +2536,15 @@ pub const Game = struct {
                 try w.print(" (+{d} HP)", .{g.healed});
             }
         }
+        if (g.rival_loot_gold > 0 or g.rival_loot_potions > 0) {
+            if (opts.color) try w.writeAll(ansi_green);
+            try w.print(" (+{d} gold, {d} potion{s})", .{
+                g.rival_loot_gold,
+                g.rival_loot_potions,
+                if (g.rival_loot_potions == 1) "" else "s",
+            });
+            if (opts.color) try w.writeAll(ansi_reset);
+        }
         if (hurt) {
             if (opts.color) {
                 try w.print(" {s}(-{d} HP){s}", .{ ansi_red, g.damage_taken, ansi_reset });
@@ -2005,6 +2553,13 @@ pub const Game = struct {
             }
         }
         try w.writeByte('\n');
+        if (g.rival_message.len > 0) {
+            if (opts.color) {
+                try w.print("{s}{s}{s}\n", .{ ansi_magenta, g.rival_message, ansi_reset });
+            } else {
+                try w.print("{s}\n", .{g.rival_message});
+            }
+        }
         if (g.state == .playing) {
             try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [q] quit\n");
         }
@@ -2059,6 +2614,13 @@ pub const Game = struct {
         if (g.blind > 0) try w.print("   BLIND {d}", .{g.blind});
         if (g.confused > 0) try w.print("   CONFUSED {d}", .{g.confused});
         if (g.paralyzed) try w.writeAll("   PARALYZED");
+        switch (g.rival.status) {
+            .here, .away => {
+                try w.print("   RIVAL Lv {d}", .{g.rival.level});
+                if (g.rivalSeen()) try w.print(" HP {d}/{d}", .{ g.rival.hp, g.rival.max_hp });
+            },
+            .none, .dead => {},
+        }
         try w.writeAll("\n\n");
     }
 
@@ -5114,4 +5676,334 @@ test "monsters are drawn with their kind's letter" {
     try testing.expectEqual(MonsterKind.monster, g.monsters[0].kind);
     var buf: [16384]u8 = undefined;
     try testing.expect(std.mem.indexOf(u8, try renderToBuf(&g, &buf, .{}), "#@M##") != null);
+}
+
+// ----- The rival adventurer -----
+
+/// The hero is walled in at the top; the rival has a corridor to the stairs.
+const rival_corridor_layout: Layout = &.{
+    "###########",
+    "#@#########",
+    "###########",
+    "#A..>######",
+    "###########",
+};
+
+test "the hunt chance grows as the hero weakens and shrinks with the rival's HP" {
+    try testing.expectEqual(@as(u32, 5), huntChance(10, 10, 10, 10));
+    try testing.expectEqual(@as(u32, 65), huntChance(4, 10, 10, 10));
+    try testing.expectEqual(@as(u32, 35), huntChance(4, 10, 5, 10));
+    try testing.expect(huntChance(2, 10, 10, 10) > huntChance(6, 10, 10, 10));
+    try testing.expectEqual(@as(u32, rival_hunt_max), huntChance(0, 10, 10, 10));
+    // Nearly dead itself, the rival never hunts.
+    try testing.expectEqual(@as(u32, 0), huntChance(1, 10, rival_flee_hp, 10));
+}
+
+test "the rival never shows up before level 5 and always by level 7" {
+    var seed: u64 = 0;
+    while (seed < 30) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        for (2..rival_first_level) |n| {
+            g.loadLevel(@intCast(n));
+            try testing.expectEqual(RivalStatus.none, g.rival.status);
+        }
+        for (rival_first_level..rival_sure_level + 1) |n| g.loadLevel(@intCast(n));
+        try testing.expect(g.rival.status != .none);
+    }
+}
+
+test "the rival walks to the stairs and goes one level ahead" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_corridor_layout);
+    g.step(.wait);
+    g.step(.wait);
+    try testing.expectEqual(Pos{ .x = 3, .y = 3 }, g.rival.pos);
+    g.step(.wait);
+    try testing.expectEqual(RivalStatus.away, g.rival.status);
+    try testing.expectEqual(@as(u32, 2), g.rival.level);
+    try testing.expect(g.rival.rounds_left >= rival_level_rounds_min);
+}
+
+test "a rival that is ahead shows up on the hero's arrival, away from the hero" {
+    var seed: u64 = 0;
+    while (seed < 20) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        g.rival = .{ .status = .away, .level = 2, .rounds_left = 10, .rounds_total = 20 };
+        g.loadLevel(2);
+        try testing.expectEqual(RivalStatus.here, g.rival.status);
+        try testing.expect(g.rival.pos.manhattan(g.hero) >= monster_safe_distance);
+        try testing.expectEqual(Tile.floor, g.tileAt(g.rival.pos));
+        try testing.expectEqual(@as(?usize, null), g.monsterAt(g.rival.pos));
+        try testing.expectEqualStrings("Your rival is already here!", g.rival_message);
+    }
+}
+
+test "a rival further ahead stays off screen" {
+    var prng = std.Random.DefaultPrng.init(3);
+    var g = Game.init(prng.random());
+    g.rival = .{ .status = .away, .level = 3, .rounds_left = 10, .rounds_total = 20 };
+    g.loadLevel(2);
+    try testing.expectEqual(RivalStatus.away, g.rival.status);
+}
+
+const rival_room_layout: Layout = &.{
+    "#######",
+    "#@....#",
+    "#######",
+};
+
+test "a rival that is behind comes in where the hero came in" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_room_layout);
+    g.rival = .{ .status = .away, .level = 0, .rounds_left = 1, .rounds_total = 30 };
+    g.step(.wait);
+    try testing.expectEqual(RivalStatus.here, g.rival.status);
+    try testing.expectEqual(@as(u32, 1), g.rival.level);
+    try testing.expectEqual(@as(u32, 1), g.rival.pos.manhattan(g.entry));
+    try testing.expectEqualStrings("You hear footsteps on the stairs: your rival is here!", g.rival_message);
+}
+
+test "the rival passes through a shop room" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = Game.init(prng.random());
+    g.loadShop(2);
+    g.rival = .{ .status = .away, .level = 1, .rounds_left = 1, .rounds_total = 30 };
+    g.step(.wait);
+    try testing.expectEqual(RivalStatus.away, g.rival.status);
+    try testing.expectEqual(@as(u32, 2), g.rival.level);
+    try testing.expect(g.rival.rounds_left >= rival_level_rounds_min);
+}
+
+test "the rival stays behind when the hero takes the stairs" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#######",
+        "#@>####",
+        "#######",
+        "#A....#",
+        "#######",
+    });
+    g.step(.right);
+    try testing.expectEqual(@as(u32, 2), g.level);
+    try testing.expectEqual(RivalStatus.away, g.rival.status);
+    try testing.expectEqual(@as(u32, 1), g.rival.level);
+    try testing.expect(g.rival.rounds_left >= 1);
+}
+
+test "the rival dies off screen when a level costs its last HP" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_room_layout);
+    g.rival = .{ .status = .away, .level = 3, .hp = 1, .rounds_left = 1, .rounds_total = 30 };
+    g.step(.wait);
+    try testing.expectEqual(RivalStatus.dead, g.rival.status);
+    try testing.expectEqualStrings("A distant scream echoes... your rival is gone.", g.rival_message);
+    // One rival per run: it never comes back.
+    g.loadLevel(rival_sure_level);
+    try testing.expectEqual(RivalStatus.dead, g.rival.status);
+}
+
+test "the rival grabs gold within reach" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#########",
+        "#@#######",
+        "#########",
+        "#>..A.$##",
+        "#########",
+    });
+    g.step(.wait);
+    g.step(.wait);
+    try testing.expectEqual(Pos{ .x = 6, .y = 3 }, g.rival.pos);
+    try testing.expectEqual(@as(u32, gold_value), g.rival.inventory.gold);
+    try testing.expectEqual(Tile.floor, g.tileAt(.{ .x = 6, .y = 3 }));
+}
+
+test "the rival drinks a health potion when low" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_corridor_layout);
+    g.rival.hp = 3;
+    g.rival.inventory.add(.small);
+    g.step(.wait);
+    try testing.expectEqual(3 + Potion.small.heal(), g.rival.hp);
+    try testing.expectEqual(@as(u32, 0), g.rival.inventory.potionCount(.small));
+    try testing.expectEqual(Pos{ .x = 1, .y = 3 }, g.rival.pos);
+}
+
+const rival_fight_layout: Layout = &.{
+    "########",
+    "#@######",
+    "########",
+    "#AM..>##",
+    "########",
+};
+
+test "the rival fights a monster and the monster bites it back" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_fight_layout);
+    const monster_start = g.monsters[0].hp;
+    g.step(.wait);
+    try testing.expectEqual(monster_start - rival_damage, g.monsters[0].hp);
+    try testing.expectEqual(@as(i32, rival_max_hp - 1), g.rival.hp);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
+}
+
+test "a slime killed by the rival splits" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "########",
+        "#@######",
+        "########",
+        "#AS..>##",
+        "########",
+    });
+    g.monsters[0].hp = 1;
+    g.step(.wait);
+    try testing.expect(g.monster_count >= 1);
+    for (g.monsters[0..g.monster_count]) |m| try testing.expectEqual(MonsterKind.small_slime, m.kind);
+    // No clear reward for the hero.
+    try testing.expectEqual(@as(u32, 0), g.reward_chests);
+}
+
+test "monsters that kill the rival leave its remains, and the hero loots them" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_fight_layout);
+    g.monsters[0].hp = 20;
+    g.rival.hp = 1;
+    g.rival.inventory.gold = 20;
+    g.rival.inventory.add(.speed); // not a health potion: it would drink it
+    const spot = g.rival.pos;
+    g.step(.wait);
+    try testing.expectEqual(RivalStatus.dead, g.rival.status);
+    try testing.expectEqual(Tile.remains, g.tileAt(spot));
+    try testing.expectEqualStrings("The monsters killed your rival!", g.rival_message);
+
+    // The hero walks onto the remains.
+    g.hero = spot.add(.{ .x = 0, .y = -1 });
+    g.setTile(g.hero, .floor);
+    g.monster_count = 0;
+    g.step(.down);
+    try testing.expectEqual(@as(u32, 20), g.inventory.gold);
+    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.speed));
+    try testing.expectEqual(Tile.floor, g.tileAt(spot));
+    var buf: [4096]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{});
+    try testing.expect(std.mem.indexOf(u8, out, "(+20 gold, 1 potion)") != null);
+}
+
+const rival_duel_layout: Layout = &.{
+    "######",
+    "#@A###",
+    "######",
+};
+
+test "a hunting rival stabs the hero" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.hunting = true;
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp - rival_damage), g.hp);
+    try testing.expectEqual(@as(i32, rival_damage), g.damage_taken);
+    try testing.expectEqualStrings("Your rival stabs you!", g.message);
+}
+
+test "a rival can kill the hero" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.hunting = true;
+    g.hp = 1;
+    g.step(.wait);
+    try testing.expectEqual(State.lost, g.state);
+    try testing.expectEqualStrings("Your rival killed you. GAME OVER.", g.message);
+}
+
+test "the rival ignores an invisible hero" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.hunting = true;
+    g.invisible = 3;
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
+    try testing.expect(!g.rival.hunting);
+}
+
+test "time stop freezes the rival" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_corridor_layout);
+    g.time_stop = 2;
+    g.step(.wait);
+    try testing.expectEqual(Pos{ .x = 1, .y = 3 }, g.rival.pos);
+}
+
+test "attacking the rival makes it hunt the hero" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.step(.right);
+    try testing.expectEqual(@as(i32, rival_max_hp - hero_damage), g.rival.hp);
+    try testing.expect(g.rival.hunting);
+    // It strikes back in the same round.
+    try testing.expectEqual(@as(i32, start_max_hp - rival_damage), g.hp);
+}
+
+test "killing the rival gives its loot and it never comes back" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.hp = 2;
+    g.rival.inventory.gold = 20;
+    g.rival.inventory.add(.small);
+    g.step(.right);
+    try testing.expectEqual(RivalStatus.dead, g.rival.status);
+    try testing.expect(g.hit_killed);
+    try testing.expectEqual(@as(u32, 20), g.inventory.gold);
+    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.small));
+    try testing.expectEqualStrings("You defeated your rival!", g.message);
+    g.loadLevel(rival_sure_level);
+    try testing.expectEqual(RivalStatus.dead, g.rival.status);
+}
+
+test "the rival is a magenta @ when seen, with its level in the header" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "##########",
+        "#@..A..>##",
+        "##########",
+    });
+    var buf: [8192]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true, .fov = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_magenta ++ "@") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "RIVAL Lv 1 HP 10/10") != null);
+}
+
+test "long random runs keep the rival on free floor" {
+    const moves = [_]Command{ .up, .down, .left, .right, .wait };
+    var seed: u64 = 0;
+    while (seed < 40) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = Game.init(prng.random());
+        g.max_hp = 1000; // keep the hero alive to watch the rival
+        g.hp = 1000;
+        g.loadLevel(rival_sure_level);
+        for (0..600) |_| {
+            if (g.state != .playing) break;
+            g.step(moves[prng.random().uintLessThan(usize, moves.len)]);
+            if (g.rival.status == .here) {
+                try testing.expect(g.tileAt(g.rival.pos) != .wall);
+                try testing.expect(!g.rival.pos.eql(g.hero));
+                try testing.expectEqual(@as(?usize, null), g.monsterAt(g.rival.pos));
+            }
+            // Now and then, jump to the next level to race the rival.
+            if (prng.random().uintLessThan(u8, 100) < 3) g.nextLevel();
+        }
+    }
+}
+
+test "the rival is hidden out of sight" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_corridor_layout);
+    var buf: [8192]u8 = undefined;
+    const out = try renderToBuf(&g, &buf, .{ .color = true, .fov = true });
+    try testing.expect(std.mem.indexOf(u8, out, ansi_magenta ++ "@") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "RIVAL Lv 1") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "RIVAL Lv 1 HP") == null);
 }

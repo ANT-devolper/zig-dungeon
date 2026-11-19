@@ -2,9 +2,13 @@
 
 One entry per change, newest first. Format: `date` `hash` subject, then what changed (pages touched). The hash of the newest entry is filled in with the next commit.
 
+## 2026-11-19
+
+- `(this commit)` feat: add a rival adventurer who races down the dungeon. `Rival`/`RivalStatus` on `Game`, `huntChance`, on-map AI `rivalTurn`, off-screen race `rivalAwayRound`/`rivalCrossedLevel`, `rivalOnNewLevel`/`rivalLeftBehind`; monsters target the nearer of hero and rival; new `Tile.remains`; `openChest` now calls `rollChest(inv)`; the hero's attack setup moved to `heroStrike`; `main.zig` prints how deep the rival got. ([rival](features/rival.md) new, [monsters](features/monsters.md), [rendering](features/rendering.md), [backlog](backlog.md))
+
 ## 2026-11-16
 
-- `(this commit)` feat: add ghosts that walk through walls. `MonsterKind.ghost` (`G`, HP -1, sight 6); `canEnter` lets ghosts cross inner walls but not the border. ([monsters](features/monsters.md))
+- `3b375c4` feat: add ghosts that walk through walls. `MonsterKind.ghost` (`G`, HP -1, sight 6); `canEnter` lets ghosts cross inner walls but not the border. ([monsters](features/monsters.md))
 - `767d1bd` feat: add brutes that hit hard but act every other round. `MonsterKind.brute` (`B`, HP +3, bite 2, sight 2), `Monster.rested`. ([monsters](features/monsters.md))
 - `48e3f16` feat: add thieves that steal gold and run away. `MonsterKind.thief` (`T`), `Monster.gold`, `moveMonsterAway`, `stolen`/`recovered`, `events.stolen`. ([monsters](features/monsters.md))
 - `52e986c` feat: add slimes that split in two when they die. `MonsterKind.slime` (`S`, HP +1) and `.small_slime` (`s`); `splitSlime` runs before the clear check. ([monsters](features/monsters.md))

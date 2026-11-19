@@ -95,6 +95,11 @@ pub fn main(init: std.process.Init) !void {
     const game = last orelse return; // quit from the title without playing
     try game.render(out, .{ .color = true, .fov = true });
     try out.print("\nFinal score: reached level {d} with {d} gold.\n", .{ game.level, game.inventory.gold });
+    switch (game.rival.status) {
+        .none => {},
+        .dead => try out.print("Your rival died on level {d}.\n", .{game.rival.level}),
+        .here, .away => try out.print("Your rival reached level {d}.\n", .{game.rival.level}),
+    }
     try out.flush();
 
     // With --no-title the defeat jingle plays here. Wait for it, or it is

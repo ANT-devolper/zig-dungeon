@@ -81,6 +81,8 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `>`    | stairs, your goal (yellow) |
 | `!`    | potion for sale in a shop: health green, strength brown, time stop yellow, vision purple, speed blue, invisibility gray, mystery white |
 | `@`    | the shopkeeper (orange) |
+| `@`    | your **rival** (magenta), another adventurer racing you down, from level 5 |
+| `%`    | what the monsters left of your rival: its gold and potions (magenta) |
 | `~`    | fountain: heals 5 HP once (blue) |
 | `+`    | offering at a fountain: 40 gold for +2 max HP (yellow) |
 | `Y`    | totem: a full heal or a curse (purple) |
@@ -128,6 +130,9 @@ Press a key. It acts at once, with no need to press **Enter**:
   | medium strength | 45 |
   | large strength | 70 |
 
+- **The rival.** From level 5 on, another adventurer (a magenta `@`) may join the race, once per run: it is always met by level 7. Sometimes it is already on the level, ahead of you; sometimes it comes down the stairs later, where you came in. Like you, it heads for the stairs, grabs gold and chests on the way, drinks health and strength potions and fights the monsters, which attack whichever of you is nearer. It keeps racing level after level even when you cannot see it: the header shows `RIVAL Lv N` (and its HP while you see it), so you know whether it is ahead or behind, and the end of the run tells how deep it got.
+  - It may also try to **kill you**. Each time it sees you (or sees you hurt), it rolls a chance that grows as your HP drops, weighed by its own HP: 5% when you are both at full HP, 65% when you have 4/10 and it is at full HP, 35% if it is at half. At 3 HP or less it never hunts. Attacking it makes it fight back for sure. It cannot see you while you are invisible, and time stop freezes it.
+  - Walk into it to attack it (sneak attacks count). Kill it and you take its gold and potions. If the monsters kill it, it leaves its remains (`%`) with its loot. Once dead, it never comes back. It never enters shops or fountains.
 - If your HP reaches 0, the game is over. Your score is the deepest level you reached, plus your gold.
 
 ## Sound

@@ -18,6 +18,15 @@ The user chose these four directions to make the game more fun. They do not all 
 - [ ] **Level-up perks.** Every 3 levels (the same pace as monster HP), the stairs offer a choice with one key: +3 max HP, +1 permanent damage or +1 view radius. Fixes the late game, where `max_hp` (10) and the hero's damage (2) never grow while monster HP does.
 - [x] **Altars and fountains.** Done on 2026-11-16, reshaped by the user: a fountain level (in place of 30% of shops) with a free heal and an offering that sells max HP, and a totem in place of a loot spot (full heal or curse). See [features/fountains-totems.md](features/fountains-totems.md). The "altar identifies a mystery potion" idea was dropped.
 
+### Company and competition (raised with the user on 2026-11-19)
+
+- [x] **Rival adventurer.** Done on 2026-11-19. See [features/rival.md](features/rival.md).
+- [ ] Dog companion (`d`): follows the hero, bites monsters, chases thieves, growls at ghosts.
+- [ ] Local high scores (top 10 in a file, `Best: level N` in the header).
+- [ ] Daily challenge (the seed comes from the date, so everyone plays the same dungeon).
+- [ ] Other ideas: a mercenary hired at the shop, a prisoner to rescue, a fairy narrator, a reaper that chases slow players.
+- A peaceful rival can block a corridor: bumping it is an attack (which makes it fight back). Not requested.
+
 ## Known issues
 
 - Inventory items past the 9th cannot be used: there are 11 potion kinds (`Potion.count`, since the invisibility potion), but the keys only go from `1` to `9` (`Command.use_1..use_9`), and `renderInventory` shows `[1-10] use` or `[1-11] use`. Possible fixes: `0` and `-` for slots 10 and 11, or merge sizes into one slot. The user chose to leave it for later (2026-11-16).
