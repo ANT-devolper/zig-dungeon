@@ -27,11 +27,27 @@ A user request: every key press acts at once, as if Enter were pressed after it.
 
 A user request: Space must hide the game at once and make the terminal look like work.
 
-- `panic_key` (`' '`) and `renderDisguise` live in `src/root.zig` (pure, tested). The disguise is fixed plain text with no colors and nothing from the game: a fake `PS C:\Users\dev\projects\gestao-qualidade>` prompt, a `git pull` and a passing `python -m pytest -v` (18 made-up tests in Portuguese, without accents), ending on the prompt with no newline.
-- `panicScreen` in `main.zig` clears the screen, draws it and **shows the cursor**, so it looks like a real prompt. **Only Space** comes back (it hides the cursor again); every other key is ignored, so the game cannot return by accident.
+- **A fake editor you type into** (user choices, 2026-11-19; it replaced a static PowerShell `pytest` screen). `panic_key` (`' '`), `Disguise`, `DisguiseKey`, `readDisguiseKey` and `disguise_code` live in `src/root.zig` (pure, tested).
+  - `Disguise.render` draws a vim look-alike over the whole screen, plain ASCII with no colors and nothing from the game:
+    - the last `disguise_rows` (20) typed lines, each with a right-aligned line number, and `~` rows below while the text is short
+    - the status line `"app/inspecao.py" [+]` with `line,col` at column 60
+    - `-- INSERT --`
+    - finally the cursor (`ESC[r;cH`) after the last typed character
+  - It overwrites each line with `ESC[K` instead of clearing, so typing does not flicker.
+  - **"Hacker typer"**: whatever key is pressed types the next piece of `disguise_code`:
+    - any key (arrows and Space included) adds `disguise_chunk` (3) characters
+    - Enter adds up to the end of the line
+    - Backspace takes back one character
+    - after the end of the code it starts over
+  - `disguise_code` is about 95 lines of believable Python for the made-up `gestao-qualidade` project (inspection sampling, AQL, non-conformities): lines of 75 columns at most, and no `@`, so no decorators.
+- `readDisguiseKey` classifies keys:
+  - `0x03` is Ctrl+C, `\r` is Enter, `0x08`/`0x7f` are Backspace, and `\n` is skipped.
+  - **Esc** is an ESC with nothing buffered after it, or followed by a byte other than `[`/`O`; that byte stays unread. A real Esc key arrives alone, while arrows arrive as a whole `ESC [ x` sequence, which is consumed and types like any key.
+- `panicScreen` in `main.zig` clears the screen once, renders the editor and **shows the cursor**. Each key re-renders it. **Esc** comes back (it hides the cursor again). Space can no longer come back, because typing uses it.
+  - The `Disguise` is a global in `main.zig`, so the typed code stays between panics in the same session.
 - It works on **every screen**: map (no turn used; the map is redrawn), inventory (redrawn and waits again), title (redrawn) and the end-of-run screen (frame and message redrawn, waits again). Before this, Space did nothing on the map and the title, and closed the inventory.
 - Ctrl+C or the end of the input inside the disguise closes the game and sets `closed_hidden`, so **nothing from the game is printed on exit** (no final frame, no score, no `--no-title` jingle). The terminal just goes back to the real shell.
-- Smoke tests: a space in an input file opens the disguise, so add a second space to come back.
+- Smoke tests: a space in an input file opens the disguise, and an ESC byte followed by any other byte (e.g. `printf ' abc\x1bq'`) comes back; the following byte then acts in the game.
 
 ## Alternate screen (no history)
 

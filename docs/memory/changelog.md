@@ -4,7 +4,8 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-19
 
-- `(this commit)` feat: freeze the rival one level ahead until the hero arrives. `rivalAwayRound` returns while `rival.level > g.level`, so the lead is at most 1 level and the hero finds it near the start (`placeRivalAhead(0)`). ([rival](features/rival.md))
+- `(this commit)` feat: turn the panic screen into a fake editor you can type into. `renderDisguise` (static pytest run) was replaced by `Disguise` (vim look-alike "hacker typer" over `disguise_code`) and `readDisguiseKey`; Esc returns instead of Space; `main.zig` keeps a global `Disguise`. ([input-terminal](features/input-terminal.md), [rendering](features/rendering.md))
+- `0b9c13c` feat: freeze the rival one level ahead until the hero arrives. `rivalAwayRound` returns while `rival.level > g.level`, so the lead is at most 1 level and the hero finds it near the start (`placeRivalAhead(0)`). ([rival](features/rival.md))
 - `fd6a9df` feat: add a rival adventurer who races down the dungeon. `Rival`/`RivalStatus` on `Game`, `huntChance`, on-map AI `rivalTurn`, off-screen race `rivalAwayRound`/`rivalCrossedLevel`, `rivalOnNewLevel`/`rivalLeftBehind`; monsters target the nearer of hero and rival; new `Tile.remains`; `openChest` now calls `rollChest(inv)`; the hero's attack setup moved to `heroStrike`; `main.zig` prints how deep the rival got. ([rival](features/rival.md) new, [monsters](features/monsters.md), [rendering](features/rendering.md), [backlog](backlog.md))
 
 ## 2026-11-16

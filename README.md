@@ -65,7 +65,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 | `i` | open the inventory (does not use a turn; any key other than a number closes it) |
 | `1`-`9` | use the item with that number in the inventory (uses a turn), from the inventory or the map |
 | `q` | give up the run (back to the title; Ctrl+C closes the whole game) |
-| Space | **panic button**: hides the game behind a fake `python -m pytest -v` run in a PowerShell window, on any screen. Only Space brings the game back (nothing is lost, no turn is used) |
+| Space | **panic button**: hides the game behind a fake code editor, on any screen. Type anything and it looks like you are programming: every key writes the next bit of ready-made Python code, Enter ends the line and Backspace erases. **Esc** brings the game back (nothing is lost, no turn is used) |
 
 | Symbol | Meaning            |
 |--------|--------------------|

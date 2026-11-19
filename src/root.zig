@@ -2693,52 +2693,224 @@ pub const Game = struct {
 
 // ---------------------------------------------------------- panic button
 
-/// The panic key: on any screen it hides the game behind `renderDisguise`,
-/// and only this key brings the game back.
+/// The panic key: on any screen it hides the game behind the fake editor
+/// (`Disguise`); Esc brings the game back.
 pub const panic_key = ' ';
 
-/// The fake prompt of the disguise: a made-up user and project.
-const disguise_prompt = "PS C:\\Users\\dev\\projects\\gestao-qualidade> ";
+/// What a key does on the panic screen (see `readDisguiseKey`).
+pub const DisguiseKey = enum {
+    /// Esc: back to the game.
+    escape,
+    /// Ctrl+C: close the game, printing nothing.
+    ctrl_c,
+    /// Backspace: take back one character.
+    backspace,
+    /// Enter: finish the current line.
+    enter,
+    /// Any other key, arrows included: type the next characters.
+    other,
+};
 
-/// Draws the panic screen: a PowerShell window that just ran a Python test
-/// suite with `python -m pytest -v`. Plain text (no colors) and nothing
-/// from the game. Ends on the prompt with no newline, so the cursor sits
-/// after it.
-pub fn renderDisguise(w: *std.Io.Writer) std.Io.Writer.Error!void {
-    try w.writeAll(disguise_prompt ++ "git pull\n" ++
-        \\Already up to date.
-        \\
-    ++ disguise_prompt ++ "python -m pytest -v\n" ++
-        \\============================= test session starts ==============================
-        \\platform win32 -- Python 3.12.4, pytest-8.3.2, pluggy-1.5.0 -- C:\Users\dev\projects\gestao-qualidade\.venv\Scripts\python.exe
-        \\cachedir: .pytest_cache
-        \\rootdir: C:\Users\dev\projects\gestao-qualidade
-        \\configfile: pyproject.toml
-        \\collected 18 items
-        \\
-        \\tests/test_inspecao.py::test_cria_inspecao_com_lote_valido PASSED         [  5%]
-        \\tests/test_inspecao.py::test_rejeita_lote_sem_numero PASSED               [ 11%]
-        \\tests/test_inspecao.py::test_inspecao_aprovada_fecha_lote PASSED          [ 16%]
-        \\tests/test_inspecao.py::test_inspecao_reprovada_abre_nc PASSED            [ 22%]
-        \\tests/test_nao_conformidade.py::test_nc_exige_causa_raiz PASSED           [ 27%]
-        \\tests/test_nao_conformidade.py::test_nc_com_acao_corretiva_encerra PASSED [ 33%]
-        \\tests/test_nao_conformidade.py::test_nc_vencida_aparece_no_painel PASSED  [ 38%]
-        \\tests/test_nao_conformidade.py::test_prazo_padrao_e_trinta_dias PASSED    [ 44%]
-        \\tests/test_plano_amostragem.py::test_tamanho_amostra_nivel_ii PASSED      [ 50%]
-        \\tests/test_plano_amostragem.py::test_criterio_aceitacao_por_aql PASSED    [ 55%]
-        \\tests/test_plano_amostragem.py::test_amostra_minima_lote_pequeno PASSED   [ 61%]
-        \\tests/test_relatorios.py::test_indice_de_rejeicao_por_fornecedor PASSED   [ 66%]
-        \\tests/test_relatorios.py::test_exporta_relatorio_csv PASSED               [ 72%]
-        \\tests/test_relatorios.py::test_relatorio_vazio_sem_inspecoes PASSED       [ 77%]
-        \\tests/test_calibracao.py::test_instrumento_vencido_bloqueia PASSED        [ 83%]
-        \\tests/test_calibracao.py::test_proxima_calibracao_no_intervalo PASSED     [ 88%]
-        \\tests/test_calibracao.py::test_certificado_obrigatorio PASSED             [ 94%]
-        \\tests/test_calibracao.py::test_historico_de_calibracoes PASSED            [100%]
-        \\
-        \\============================== 18 passed in 1.37s ==============================
-        \\
-    ++ disguise_prompt);
+/// Reads one key on the panic screen; null at the end of the input. A real
+/// Esc key arrives alone, while arrows and other special keys arrive as a
+/// whole `ESC [ ...` or `ESC O x` sequence, so an ESC with nothing buffered
+/// after it, or followed by another byte, is Esc (that byte stays unread).
+pub fn readDisguiseKey(in: *std.Io.Reader) std.Io.Reader.Error!?DisguiseKey {
+    while (true) {
+        const b = try takeKeyByte(in) orelse return null;
+        switch (b) {
+            '\n' => continue, // only redirected files have it
+            '\r' => return .enter,
+            0x03 => return .ctrl_c,
+            0x08, 0x7f => return .backspace,
+            0x1b => {
+                if (in.bufferedLen() == 0) return .escape;
+                const intro = in.buffered()[0];
+                if (intro != '[' and intro != 'O') return .escape;
+                in.toss(1);
+                if (intro == 'O') {
+                    _ = try takeKeyByte(in) orelse return null;
+                    return .other;
+                }
+                // Parameter bytes until the final byte 0x40-0x7E.
+                while (true) {
+                    const c = try takeKeyByte(in) orelse return null;
+                    if (c >= 0x40 and c <= 0x7e) break;
+                }
+                return .other;
+            },
+            else => return .other,
+        }
+    }
 }
+
+/// Lines of code shown on the panic screen (the rest scrolls away).
+pub const disguise_rows = 20;
+/// Characters typed by each key, like a fast typist.
+const disguise_chunk = 3;
+/// The fake file being edited, in the made-up project.
+const disguise_file = "app/inspecao.py";
+/// Column of `line,col` on the status line, like vim's ruler.
+const disguise_ruler_col = 60;
+
+/// The code the panic screen "types": believable Python of a made-up
+/// quality-control project. Plain ASCII, lines of 75 columns at most, and
+/// nothing that looks like the game (no '@', which is the hero).
+const disguise_code =
+    \\"""Regras de inspecao de recebimento e controle de nao conformidades."""
+    \\
+    \\from datetime import date, timedelta
+    \\from decimal import Decimal
+    \\
+    \\from app.models import Fornecedor, Lote, NaoConformidade
+    \\from app.repositorio import Repositorio
+    \\
+    \\PRAZO_PADRAO_NC = timedelta(days=30)
+    \\
+    \\# Tabela simplificada NBR 5426, nivel geral II (lote -> amostra)
+    \\TABELA_AMOSTRAGEM = [
+    \\    (8, 2),
+    \\    (15, 3),
+    \\    (25, 5),
+    \\    (50, 8),
+    \\    (90, 13),
+    \\    (150, 20),
+    \\    (280, 32),
+    \\    (500, 50),
+    \\    (1200, 80),
+    \\    (3200, 125),
+    \\]
+    \\
+    \\
+    \\def tamanho_amostra(tamanho_lote: int) -> int:
+    \\    """Retorna o tamanho da amostra para o lote (nivel geral II)."""
+    \\    if tamanho_lote <= 0:
+    \\        raise ValueError("lote vazio nao pode ser inspecionado")
+    \\    for limite, amostra in TABELA_AMOSTRAGEM:
+    \\        if tamanho_lote <= limite:
+    \\            return min(amostra, tamanho_lote)
+    \\    return 200
+    \\
+    \\
+    \\def criterio_aceitacao(aql: Decimal, amostra: int) -> int:
+    \\    """Numero maximo de defeitos aceitos na amostra para o AQL."""
+    \\    fator = aql * amostra / Decimal(100)
+    \\    return int(fator.to_integral_value())
+    \\
+    \\
+    \\class ResultadoInspecao:
+    \\    def __init__(self, lote: Lote, defeitos: int, aceitacao: int):
+    \\        self.lote = lote
+    \\        self.defeitos = defeitos
+    \\        self.aceitacao = aceitacao
+    \\
+    \\    def aprovado(self) -> bool:
+    \\        return self.defeitos <= self.aceitacao
+    \\
+    \\    def taxa_defeitos(self) -> Decimal:
+    \\        amostra = tamanho_amostra(self.lote.quantidade)
+    \\        taxa = Decimal(self.defeitos) / amostra
+    \\        return taxa.quantize(Decimal("0.001"))
+    \\
+    \\
+    \\def inspecionar(lote: Lote, defeitos: int, repo: Repositorio):
+    \\    """Registra a inspecao e abre uma NC quando o lote e reprovado."""
+    \\    if not lote.numero:
+    \\        raise ValueError("lote sem numero")
+    \\    amostra = tamanho_amostra(lote.quantidade)
+    \\    criterio = criterio_aceitacao(lote.aql, amostra)
+    \\    resultado = ResultadoInspecao(lote, defeitos, criterio)
+    \\    if resultado.aprovado():
+    \\        lote.status = "aprovado"
+    \\        lote.fechado_em = date.today()
+    \\    else:
+    \\        lote.status = "reprovado"
+    \\        abrir_nao_conformidade(lote, resultado, repo)
+    \\    repo.salvar(lote)
+    \\    return resultado
+    \\
+    \\
+    \\def abrir_nao_conformidade(lote, resultado, repo: Repositorio):
+    \\    nc = NaoConformidade(
+    \\        lote=lote,
+    \\        fornecedor=lote.fornecedor,
+    \\        descricao=f"{resultado.defeitos} defeitos no lote {lote.numero}",
+    \\        prazo=date.today() + PRAZO_PADRAO_NC,
+    \\    )
+    \\    repo.salvar(nc)
+    \\    notificar_fornecedor(lote.fornecedor, nc)
+    \\    return nc
+    \\
+    \\
+    \\def notificar_fornecedor(fornecedor: Fornecedor, nc: NaoConformidade):
+    \\    # TODO: trocar pelo envio real quando o SMTP estiver configurado
+    \\    assunto = f"Nao conformidade aberta - lote {nc.lote.numero}"
+    \\    fornecedor.mensagens.append((assunto, nc.prazo.isoformat()))
+    \\
+    \\
+    \\def indice_rejeicao(fornecedor: Fornecedor, repo: Repositorio) -> Decimal:
+    \\    lotes = repo.lotes_do_fornecedor(fornecedor.id)
+    \\    if not lotes:
+    \\        return Decimal("0")
+    \\    reprovados = sum(1 for lote in lotes if lote.status == "reprovado")
+    \\    return Decimal(reprovados) / len(lotes)
+    \\
+;
+
+/// The panic screen: a fake vim editing a Python file. Whatever the
+/// player types, the next piece of `disguise_code` appears ("hacker
+/// typer"), so it looks like fast, flawless programming (a user choice).
+pub const Disguise = struct {
+    /// How many characters of `disguise_code` are on screen.
+    typed: usize = 0,
+
+    /// Applies one key. Typing past the end starts the file over.
+    pub fn key(d: *Disguise, k: DisguiseKey) void {
+        switch (k) {
+            .backspace => d.typed -|= 1,
+            .other, .enter => {
+                if (d.typed >= disguise_code.len) d.typed = 0;
+                if (k == .enter) {
+                    const nl = std.mem.indexOfScalar(u8, disguise_code[d.typed..], '\n');
+                    d.typed = if (nl) |i| d.typed + i + 1 else disguise_code.len;
+                } else {
+                    d.typed = @min(disguise_code.len, d.typed + disguise_chunk);
+                }
+            },
+            .escape, .ctrl_c => {},
+        }
+    }
+
+    /// The code typed so far.
+    pub fn text(d: *const Disguise) []const u8 {
+        return disguise_code[0..d.typed];
+    }
+
+    /// Draws the editor over the whole screen without clearing it first
+    /// (each line is overwritten, so there is no flicker): the last
+    /// `disguise_rows` lines with their numbers, `~` below them, the status
+    /// line and `-- INSERT --`. The cursor ends after the last typed character.
+    pub fn render(d: *const Disguise, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        const typed = d.text();
+        const lines = std.mem.count(u8, typed, "\n") + 1;
+        const first = lines -| disguise_rows; // index of the first line shown
+        try w.writeAll("\x1b[H");
+        var it = std.mem.splitScalar(u8, typed, '\n');
+        var i: usize = 0;
+        var last: []const u8 = "";
+        while (it.next()) |line| : (i += 1) {
+            last = line;
+            if (i < first) continue;
+            try w.print("{d:>4} {s}\x1b[K\n", .{ i + 1, line });
+        }
+        for (lines - first..disguise_rows) |_| try w.writeAll("~\x1b[K\n");
+        const status = "\"" ++ disguise_file ++ "\" [+]";
+        try w.writeAll(status);
+        try w.splatByteAll(' ', disguise_ruler_col - status.len);
+        try w.print("{d},{d}\x1b[K\n-- INSERT --\x1b[K\x1b[J", .{ lines, last.len + 1 });
+        try w.print("\x1b[{d};{d}H", .{ lines - first, 6 + last.len });
+    }
+};
 
 // ---------------------------------------------------------- title screen
 
@@ -2955,28 +3127,114 @@ test "arrow keys move the cursor on the title screen" {
     try testing.expectEqual(TitleChoice.play, t.selected);
 }
 
-test "the disguise looks like pytest running in PowerShell" {
-    var buf: [4096]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    try renderDisguise(&w);
-    const out = w.buffered();
-    try testing.expect(std.mem.indexOf(u8, out, "gestao-qualidade> python -m pytest -v\n") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "test session starts") != null);
-    try testing.expect(std.mem.indexOf(u8, out, " 18 passed in ") != null);
-    try testing.expectEqual(@as(usize, 18), std.mem.count(u8, out, " PASSED "));
-    try testing.expect(std.mem.startsWith(u8, out, "PS C:\\Users\\dev\\projects\\gestao-qualidade> "));
-    try testing.expect(std.mem.endsWith(u8, out, "\nPS C:\\Users\\dev\\projects\\gestao-qualidade> "));
+/// Reads every panic-screen key from `bytes` until the end of the input.
+fn readAllDisguiseKeys(bytes: []const u8, out: []DisguiseKey) ![]const DisguiseKey {
+    var in: std.Io.Reader = .fixed(bytes);
+    var n: usize = 0;
+    while (try readDisguiseKey(&in)) |k| : (n += 1) out[n] = k;
+    return out[0..n];
 }
 
-test "the disguise shows nothing from the game" {
-    var buf: [4096]u8 = undefined;
+test "a lone Esc leaves the panic screen, arrows and letters type" {
+    var buf: [16]DisguiseKey = undefined;
+    try testing.expectEqualSlices(DisguiseKey, &.{.escape}, try readAllDisguiseKeys("\x1b", &buf));
+    try testing.expectEqualSlices(DisguiseKey, &.{ .other, .other, .other }, try readAllDisguiseKeys("\x1b[A\x1bOB\x1b[1;5C", &buf));
+    try testing.expectEqualSlices(DisguiseKey, &.{ .other, .other, .other }, try readAllDisguiseKeys("a Z", &buf));
+    try testing.expectEqualSlices(DisguiseKey, &.{ .ctrl_c, .enter, .backspace, .backspace }, try readAllDisguiseKeys("\x03\r\n\x7f\x08", &buf));
+}
+
+test "an Esc followed by another key leaves that key unread" {
+    var in: std.Io.Reader = .fixed("\x1bq");
+    try testing.expectEqual(@as(?DisguiseKey, .escape), try readDisguiseKey(&in));
+    try testing.expectEqual(@as(?u8, 'q'), try readKey(&in));
+}
+
+test "every key types the next characters of the code" {
+    var d: Disguise = .{};
+    d.key(.other);
+    try testing.expectEqualStrings(disguise_code[0..disguise_chunk], d.text());
+    d.key(.other);
+    try testing.expectEqual(@as(usize, 2 * disguise_chunk), d.typed);
+    d.key(.backspace);
+    try testing.expectEqual(@as(usize, 2 * disguise_chunk - 1), d.typed);
+    d.key(.enter); // finishes the first line
+    try testing.expect(std.mem.endsWith(u8, d.text(), "\n"));
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, d.text(), "\n"));
+    // Esc and Ctrl+C type nothing.
+    const before = d.typed;
+    d.key(.escape);
+    d.key(.ctrl_c);
+    try testing.expectEqual(before, d.typed);
+}
+
+test "backspace never goes below the start" {
+    var d: Disguise = .{};
+    d.key(.backspace);
+    try testing.expectEqual(@as(usize, 0), d.typed);
+}
+
+test "typing past the end of the code starts it over" {
+    var d: Disguise = .{ .typed = disguise_code.len - 1 };
+    d.key(.other);
+    try testing.expectEqual(disguise_code.len, d.typed);
+    d.key(.other);
+    try testing.expectEqual(@as(usize, disguise_chunk), d.typed);
+}
+
+test "the panic screen looks like vim with the typed code" {
+    var buf: [8192]u8 = undefined;
+    var d: Disguise = .{};
     var w: std.Io.Writer = .fixed(&buf);
-    try renderDisguise(&w);
+    try d.render(&w);
+    var out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "-- INSERT --") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"app/inspecao.py\" [+]") != null);
+    try testing.expectEqual(@as(usize, disguise_rows - 1), std.mem.count(u8, out, "~\x1b[K\n"));
+    // The cursor sits after the line number on the first line.
+    try testing.expect(std.mem.endsWith(u8, out, "\x1b[1;6H"));
+
+    d.key(.enter);
+    d.key(.enter);
+    d.key(.other);
+    w = .fixed(&buf);
+    try d.render(&w);
+    out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "   1 \"\"\"Regras de inspecao") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "   3 fro\x1b[K") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "3,4") != null);
+    try testing.expect(std.mem.endsWith(u8, out, "\x1b[3;9H"));
+}
+
+test "the panic screen scrolls to show the last lines typed" {
+    var buf: [8192]u8 = undefined;
+    var d: Disguise = .{};
+    for (0..30) |_| d.key(.enter);
+    var w: std.Io.Writer = .fixed(&buf);
+    try d.render(&w);
     const out = w.buffered();
-    for ([_][]const u8{ "DUNGEON", "HP", "@", "Gold", "gold", "Level", "#####" }) |word| {
-        try testing.expect(std.mem.indexOf(u8, out, word) == null);
+    // 31 lines (30 typed and an empty one): lines 12 to 31 are shown.
+    try testing.expect(std.mem.indexOf(u8, out, "  11 ") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[H  12 ") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "  31 \x1b[K") != null);
+    try testing.expectEqual(@as(usize, 0), std.mem.count(u8, out, "~\x1b[K\n"));
+    try testing.expect(std.mem.endsWith(u8, out, "\x1b[20;6H"));
+}
+
+test "the panic screen shows nothing from the game" {
+    var lines = std.mem.splitScalar(u8, disguise_code, '\n');
+    while (lines.next()) |line| try testing.expect(line.len <= 75);
+    for (disguise_code) |c| try testing.expect(c == '\n' or (c >= ' ' and c <= '~'));
+    var buf: [8192]u8 = undefined;
+    var d: Disguise = .{};
+    while (d.typed < disguise_code.len) {
+        var w: std.Io.Writer = .fixed(&buf);
+        try d.render(&w);
+        const out = w.buffered();
+        for ([_][]const u8{ "DUNGEON", "HP", "@", "Gold", "gold", "Level", "#####" }) |word| {
+            try testing.expect(std.mem.indexOf(u8, out, word) == null);
+        }
+        d.key(.enter);
     }
-    for (out) |c| try testing.expect(c == '\n' or (c >= ' ' and c <= '~'));
 }
 
 test "space is the panic key, not a game command" {

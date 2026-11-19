@@ -178,25 +178,35 @@ fn drawTitle(out: *Io.Writer, title: *const brewdungeon.Title, last: ?brewdungeo
     try out.flush();
 }
 
-/// The panic button: hides the game behind a fake PowerShell pytest run
-/// (`renderDisguise`) with a visible cursor, until the panic key is pressed
-/// again; other keys do nothing. Returns true when the game must close
-/// (Ctrl+C or the end of the input), and then nothing from the game is
-/// printed on exit.
+/// The fake editor behind the panic button. It lives for the whole session,
+/// so the code typed so far is still there the next time it opens.
+var disguise: brewdungeon.Disguise = .{};
+
+/// The panic button: hides the game behind a fake vim (`Disguise`) with a
+/// visible cursor. Every key types the next piece of ready-made code; Esc
+/// brings the game back. Returns true when the game must close (Ctrl+C or
+/// the end of the input), and then nothing from the game is printed on exit.
 fn panicScreen(in: *Io.Reader, out: *Io.Writer) !bool {
-    try out.writeAll("\x1b[2J\x1b[H");
-    try brewdungeon.renderDisguise(out);
-    try out.writeAll("\x1b[?25h"); // show the cursor, like a real prompt
+    try out.writeAll("\x1b[2J");
+    try disguise.render(out);
+    try out.writeAll("\x1b[?25h"); // show the cursor, like a real editor
     try out.flush();
     while (true) {
-        const key = try readKey(in) orelse 0x03;
-        if (key == ctrl_c) {
-            closed_hidden = true;
-            return true;
-        }
-        if (key == brewdungeon.panic_key) {
-            try out.writeAll("\x1b[?25l"); // hide it again for the game
-            return false;
+        const key = try brewdungeon.readDisguiseKey(in) orelse .ctrl_c;
+        switch (key) {
+            .ctrl_c => {
+                closed_hidden = true;
+                return true;
+            },
+            .escape => {
+                try out.writeAll("\x1b[?25l"); // hide it again for the game
+                return false;
+            },
+            .backspace, .enter, .other => {
+                disguise.key(key);
+                try disguise.render(out);
+                try out.flush();
+            },
         }
     }
 }
