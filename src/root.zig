@@ -430,8 +430,9 @@ pub const RivalStatus = enum {
     none,
     /// On the hero's map, acting every round (`rivalTurn`).
     here,
-    /// Off screen on `Rival.level`: ahead when it is deeper than the hero,
-    /// behind otherwise. `rounds_left` counts down to the next level.
+    /// Off screen on `Rival.level`: ahead when it is deeper than the hero
+    /// (then frozen until the hero arrives, at most 1 level ahead), behind
+    /// otherwise. Behind, `rounds_left` counts down to the next level.
     away,
     /// Gone for the rest of the run (one rival per run).
     dead,
@@ -1820,6 +1821,9 @@ pub const Game = struct {
     /// rival passes through.
     fn rivalAwayRound(g: *Game) void {
         const r = &g.rival;
+        // A rival ahead of the hero waits on that level, frozen, until the
+        // hero arrives (a user rule): it is never more than 1 level ahead.
+        if (r.level > g.level) return;
         if (r.rounds_left > 1) {
             r.rounds_left -= 1;
             return;
@@ -5740,6 +5744,37 @@ test "a rival that is ahead shows up on the hero's arrival, away from the hero" 
     }
 }
 
+test "a rival one level ahead waits frozen for the hero" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_room_layout);
+    g.rival = .{ .status = .away, .level = 2, .hp = 7, .rounds_left = 50, .rounds_total = 60 };
+    for (0..200) |_| g.step(.wait);
+    try testing.expectEqual(RivalStatus.away, g.rival.status);
+    try testing.expectEqual(@as(u32, 2), g.rival.level);
+    try testing.expectEqual(@as(u16, 50), g.rival.rounds_left);
+    try testing.expectEqual(@as(i32, 7), g.rival.hp);
+}
+
+test "a rival that took the stairs is found near the start of the next level" {
+    var seed: u64 = 0;
+    while (seed < 20) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, rival_corridor_layout);
+        for (0..3) |_| g.step(.wait); // it takes the stairs
+        try testing.expectEqual(RivalStatus.away, g.rival.status);
+        for (0..100) |_| g.step(.wait); // it waits, frozen
+        try testing.expectEqual(@as(u32, 2), g.rival.level);
+        g.loadLevel(2);
+        try testing.expectEqual(RivalStatus.here, g.rival.status);
+        const from_hero = g.distanceMap(g.hero);
+        const stairs = g.stairsPos().?;
+        const to_rival = from_hero[@intCast(g.rival.pos.y)][@intCast(g.rival.pos.x)].?;
+        const to_stairs = from_hero[@intCast(stairs.y)][@intCast(stairs.x)].?;
+        try testing.expect(g.rival.pos.manhattan(g.hero) >= monster_safe_distance);
+        try testing.expect(to_rival < to_stairs / 2);
+    }
+}
+
 test "a rival further ahead stays off screen" {
     var prng = std.Random.DefaultPrng.init(3);
     var g = Game.init(prng.random());
@@ -5795,7 +5830,8 @@ test "the rival stays behind when the hero takes the stairs" {
 test "the rival dies off screen when a level costs its last HP" {
     var prng = std.Random.DefaultPrng.init(1);
     var g = testGame(&prng, rival_room_layout);
-    g.rival = .{ .status = .away, .level = 3, .hp = 1, .rounds_left = 1, .rounds_total = 30 };
+    // Behind the hero: only a rival that is behind keeps racing.
+    g.rival = .{ .status = .away, .level = 0, .hp = 1, .rounds_left = 1, .rounds_total = 30 };
     g.step(.wait);
     try testing.expectEqual(RivalStatus.dead, g.rival.status);
     try testing.expectEqualStrings("A distant scream echoes... your rival is gone.", g.rival_message);

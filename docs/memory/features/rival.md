@@ -31,7 +31,8 @@ The numbers are my picks.
 
 ## Off screen (`rivalAwayRound`, every round in `endRound`, even during time stop)
 
-- `rounds_left` counts down. When it ends, `level += 1` and `rivalCrossedLevel` runs, in this order:
+- **Ahead = frozen** (user rule, 2026-11-19): while `rival.level > g.level`, `rivalAwayRound` returns at once. The counter does not tick, it takes no damage, and it never crosses another level, so the lead is at most 1 level. A rival that reaches `g.level + 1` (by the stairs on the hero's map, or off screen) has a fresh counter, so on the hero's arrival its progress is 0% and `placeRivalAhead(0)` puts it near the start: the free tile nearest to the hero by walking, at least `monster_safe_distance` away. Only a rival that is behind (or on the level of the hero's shop or fountain room) races on.
+- Behind, `rounds_left` counts down. When it ends, `level += 1` and `rivalCrossedLevel` runs, in this order:
   1. one chest roll (`rollChest(&rival.inventory)`)
   2. 1-3 damage (`rival_away_damage_*`); at 0 HP it becomes `dead`, its loot is lost and the hero sees "A distant scream echoes... your rival is gone."
   3. a health potion if its HP is at or below 4
