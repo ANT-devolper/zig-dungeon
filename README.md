@@ -140,7 +140,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 
 On Windows the game plays retro sound effects for strikes, kills, damage, gold, stairs, shopping and defeat. They are synthesized in code (square waves, noise and pitch sweeps) into in-memory WAV files, so there are no audio assets or libraries. On other systems the game is silent.
 
-While you are in the dungeon a quiet chiptune soundtrack loops in the background (a melody and a bass line in A minor, also synthesized in code). It stops on the title, the end-of-run screen and the panic screen. Press `m` during a run to turn it off or on; the sound effects keep playing either way.
+While you are in the dungeon a slow, dark chiptune loops in the background (a low melody and bass line in A minor on soft triangle waves, also synthesized in code). It stops on the title, the end-of-run screen and the panic screen. Press `m` during a run to turn it off or on; the sound effects keep playing either way.
 
 To play without sound:
 

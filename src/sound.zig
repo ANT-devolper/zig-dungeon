@@ -9,7 +9,7 @@ pub const sample_rate = 22050;
 pub const header_len = 44;
 pub const silence: u8 = 128;
 
-pub const Wave = enum { square, noise };
+pub const Wave = enum { square, triangle, noise };
 
 /// One synthesized segment. The frequency slides linearly from
 /// `freq_start` to `freq_end` and the volume decays linearly to zero.
@@ -170,6 +170,12 @@ fn writeNotes(out: []u8, notes: []const Note, mode: WriteMode) void {
                     phase -= @floor(phase);
                     break :blk if (phase < 0.5) 1 else -1;
                 },
+                .triangle => blk: {
+                    const freq = n.freq_start + (freq_end - n.freq_start) * t;
+                    phase += freq / sample_rate;
+                    phase -= @floor(phase);
+                    break :blk 4 * @abs(phase - 0.5) - 1;
+                },
                 .noise => blk: {
                     // xorshift32
                     noise ^= noise << 13;
@@ -200,79 +206,68 @@ pub const Music = struct {
     bass: []const Note,
 };
 
-/// Length of one eighth note in the music, in ms.
-const eighth = 200;
+/// Length of one beat in the music, in ms (about 79 beats per minute).
+/// A multiple of 40 ms, so every note is a whole number of samples and
+/// the two voices stay in step.
+const beat = 760;
 
-fn mel(freq: f32, eighths: u32) Note {
-    return .{ .freq_start = freq, .ms = eighths * eighth, .volume = if (freq == 0) 0 else 0.16 };
+/// A melody note lasting `beats` beats, on the soft triangle wave.
+fn mel(freq: f32, beats: u32) Note {
+    return .{ .wave = .triangle, .freq_start = freq, .ms = beats * beat, .volume = if (freq == 0) 0 else 0.3 };
 }
 
-fn rest(eighths: u32) Note {
-    return mel(0, eighths);
+fn rest(beats: u32) Note {
+    return mel(0, beats);
 }
 
-/// One bar of bass in quarter notes: root, fifth, octave, fifth.
-fn bassBar(root: f32, fifth: f32) [4]Note {
+/// One bar of bass: two long half notes, the root and then its fifth.
+fn bassBar(root: f32, fifth: f32) [2]Note {
     const n = struct {
-        fn q(f: f32) Note {
-            return .{ .freq_start = f, .ms = 2 * eighth, .volume = 0.14 };
+        fn half(f: f32) Note {
+            return .{ .wave = .triangle, .freq_start = f, .ms = 2 * beat, .volume = 0.35 };
         }
-    }.q;
-    return .{ n(root), n(fifth), n(root * 2), n(fifth) };
+    }.half;
+    return .{ n(root), n(fifth) };
 }
 
 // Note frequencies (Hz).
+const D2 = 73.42;
+const E2 = 82.41;
+const F2 = 87.31;
 const A2 = 110.0;
+const Bb2 = 116.54;
 const B2 = 123.47;
 const C3 = 130.81;
-const D2 = 73.42;
-const D3 = 146.83;
-const E2 = 82.41;
 const E3 = 164.81;
-const F2 = 87.31;
-const G2 = 98.0;
+const F3 = 174.61;
+const Gs3 = 207.65;
+const A3 = 220.0;
+const Bb3 = 233.08;
+const B3 = 246.94;
+const C4 = 261.63;
+const D4 = 293.66;
 const E4 = 329.63;
 const F4 = 349.23;
 const G4 = 392.0;
-const Gs4 = 415.3;
 const A4 = 440.0;
-const B4 = 493.88;
-const C5 = 523.25;
-const D5 = 587.33;
-const E5 = 659.25;
-const F5 = 698.46;
-const G5 = 783.99;
-const A5 = 880.0;
 
-/// The dungeon theme: 8 bars in A minor (Am F G E Am F Dm E), 12.8 s,
-/// quiet so the sound effects stay on top. It ends on a rest, so the loop
-/// joins without a click.
+/// The dungeon theme: 8 slow bars in A minor with a dark B flat
+/// (Am Am F E Am Dm Bb E), 4 beats each at about 79 bpm, 24.3 s. Low triangle
+/// waves and long fading notes, quiet so the sound effects stay on top.
+/// It ends on a rest, so the loop joins without a click.
 pub const dungeon_theme: Music = .{
     .melody = &[_]Note{
-        // Am
-        mel(E4, 1), mel(A4, 1),  mel(C5, 1), mel(E5, 1), mel(D5, 1), mel(C5, 1), mel(B4, 1), mel(C5, 1),
-        // F
-        mel(A4, 2), mel(F4, 1),  mel(A4, 1), mel(C5, 2), rest(2),
-        // G
-           mel(B4, 1), mel(D5, 1), mel(G5, 1),
-        mel(D5, 1), mel(B4, 1),  mel(G4, 1), mel(B4, 1), mel(D5, 1),
-        // E
-        mel(E5, 2), mel(D5, 1), mel(C5, 1),
-        mel(B4, 2), mel(Gs4, 2),
-        // Am
-        mel(A4, 1), mel(C5, 1), mel(E5, 1), mel(A5, 1), mel(G5, 1), mel(E5, 1),
-        mel(C5, 1), mel(E5, 1),
-        // F
-         mel(F5, 2), mel(E5, 1), mel(D5, 1), mel(C5, 2), mel(A4, 2),
-        // Dm
-        mel(D5, 1),
-        mel(F5, 1), mel(A5, 1),  mel(F5, 1), mel(E5, 1), mel(D5, 1), mel(C5, 1), mel(B4, 1),
-        // E
-        mel(Gs4, 2),
-        mel(B4, 1), mel(E5, 1),  rest(4),
+        mel(A3, 1), mel(C4, 1), mel(E4, 2), // Am
+        mel(E4, 1), mel(D4, 1), mel(C4, 1), mel(B3, 1), // Am
+        mel(A3, 2), mel(C4, 1), mel(A3, 1), // F
+        mel(Gs3, 3), rest(1), // E
+        mel(E4, 1), mel(A4, 1), mel(G4, 1), mel(E4, 1), // Am
+        mel(F4, 2), mel(E4, 1), mel(D4, 1), // Dm
+        mel(F4, 1), mel(D4, 1), mel(Bb3, 2), // Bb
+        mel(B3, 1), mel(Gs3, 1), mel(E3, 1), rest(1), // E
     },
-    .bass = &(bassBar(A2, E3) ++ bassBar(F2, C3) ++ bassBar(G2, D3) ++ bassBar(E2, B2) ++
-        bassBar(A2, E3) ++ bassBar(F2, C3) ++ bassBar(D2, A2) ++ bassBar(E2, B2)),
+    .bass = &(bassBar(A2, E3) ++ bassBar(A2, E3) ++ bassBar(F2, C3) ++ bassBar(E2, B2) ++
+        bassBar(A2, E3) ++ bassBar(D2, A2) ++ bassBar(Bb2, F3) ++ bassBar(E2, B2)),
 };
 
 fn samplesIn(notes: []const Note) usize {
@@ -481,6 +476,18 @@ test "square wave swings around silence" {
     try testing.expect(std.mem.min(u8, samples) < silence - 40);
 }
 
+test "triangle wave swings around silence without jumps" {
+    var buf: [header_len + 2000]u8 = undefined;
+    const wav = synth(&buf, &.{.{ .wave = .triangle, .freq_start = 220, .ms = 50, .volume = 0.5 }});
+    const samples = wav[header_len..];
+    try testing.expect(std.mem.max(u8, samples) > silence + 40);
+    try testing.expect(std.mem.min(u8, samples) < silence - 40);
+    // Unlike the square wave it ramps: neighbors are always close.
+    for (samples[1..], samples[0 .. samples.len - 1]) |b, a| {
+        try testing.expect(@abs(@as(i16, b) - a) <= 4);
+    }
+}
+
 test "noise is deterministic" {
     var a: [max_wav_len]u8 = undefined;
     var b: [max_wav_len]u8 = undefined;
@@ -493,15 +500,19 @@ test "the dungeon theme's two voices last exactly as long" {
     var bass_ms: u32 = 0;
     for (dungeon_theme.bass) |n| bass_ms += n.ms;
     try testing.expectEqual(melody_ms, bass_ms);
-    try testing.expectEqual(@as(u32, 64 * eighth), melody_ms);
+    try testing.expectEqual(@as(u32, 32 * beat), melody_ms);
 }
 
 var test_music: [musicLen(dungeon_theme)]u8 = undefined;
 var test_music2: [musicLen(dungeon_theme)]u8 = undefined;
 
+test "the dungeon theme's voices stay in step sample by sample" {
+    try testing.expectEqual(samplesIn(dungeon_theme.melody), samplesIn(dungeon_theme.bass));
+}
+
 test "music loop length matches its duration" {
     const samples = synthMusic(&test_music, dungeon_theme);
-    try testing.expectEqual(samplesFor(64 * eighth), samples.len);
+    try testing.expectEqual(samplesFor(32 * beat), samples.len);
 }
 
 test "music loop ends in silence so it joins without a click" {
@@ -513,7 +524,7 @@ test "music loop ends in silence so it joins without a click" {
 
 test "music mixes both voices" {
     const both = synthMusic(&test_music, dungeon_theme);
-    const melody_only = synthMusic(&test_music2, .{ .melody = dungeon_theme.melody, .bass = &.{.{ .ms = 64 * eighth, .volume = 0 }} });
+    const melody_only = synthMusic(&test_music2, .{ .melody = dungeon_theme.melody, .bass = &.{.{ .ms = 32 * beat, .volume = 0 }} });
     try testing.expect(!std.mem.eql(u8, both, melody_only));
     // Both voices together swing wider than the melody alone.
     try testing.expect(std.mem.max(u8, both) > std.mem.max(u8, melody_only));
