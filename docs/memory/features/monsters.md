@@ -9,7 +9,7 @@ Every monster has a `kind` (`MonsterKind`), which gives its letter, HP, bite, si
 | Kind | Letter | From level | Spawn weight | HP | Bite | Sight | Actions per round |
 |---|---|---|---|---|---|---|---|
 | monster | `M` | 1 | 40 | `monsterHp(level)` | 1 | 4 (was 6 before kinds) | 1 |
-| rat | `r` | 2 | 20 | 1 | 1 | 5 (the monster's + 1) | **2** (`actions()`): it moves twice, or bites twice |
+| rat | `r` | 2 | 20 | 1 | 1 | 5 (the monster's + 1) | **2** (`actions()`): it moves twice, or bites twice; while the hero is fast, one action after each hero action (see [rounds](rounds.md)) |
 | slime | `S` | 3 | 10 | `monsterHp(level)` + 1 | 1 | 4 (my pick) | 1 |
 | small slime | `s` | 3 (only from a split) | 0 | max(1, `monsterHp(level)` / 2) | 1 | 4 | 1 |
 | thief | `T` | 4 | 10 | max(1, `monsterHp(level)` - 1) | 1 (only with no gold to steal) | 5 | 1 |

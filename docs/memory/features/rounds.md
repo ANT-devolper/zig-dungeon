@@ -22,6 +22,8 @@ Time stop, strength and vision set a `*_fresh` flag when drunk. In `endRound`, a
 
 Speed is always drunk at the start of a fast round, so that round counts: 10 rounds are 20 actions, including the drink. `endRound` decrements it. `isFast()` drives the hero's cyan background (`ansi_fast`; red when hurt wins).
 
+**Rats and speed (a user rule):** a rat has 2 actions per round. In a fast round `halfRoundTurn` (called in the first half of `step`) gives each 2-action monster one action right after the hero's first action, and `endRound` (`split = speed > 0`, read before the tick) gives it the remaining one through `monstersTurn(hidden, split)`. So the rat moves or bites once per hero action. Time stop skips both halves; the slow curse's extra monster turn stays a full turn.
+
 With speed and time stop together, each frozen round lasts 2 actions, so `TIME STOP` drops once every 2 actions. Strength and vision also last 2 actions per round with speed.
 
 Tests: `"speed gives 2 actions per round for 10 rounds (20 actions)"`, `"time stop drunk in the first half of a fast round still gives 3 free rounds"`, `"strength combines with speed and time stop: it counts rounds, not actions"`, `"vision shows the whole map for the drink round plus 3, then fov comes back"`.

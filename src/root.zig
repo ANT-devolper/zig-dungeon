@@ -1598,6 +1598,7 @@ pub const Game = struct {
         // monsters and every effect counter advance once per round.
         if (g.speed > 0 and !g.half_round) {
             g.half_round = true; // first action of the round: the world waits
+            g.halfRoundTurn(); // except monsters with 2 actions: one now
             return;
         }
         g.half_round = false;
@@ -1608,6 +1609,9 @@ pub const Game = struct {
     /// is stopped, the monsters act.
     fn endRound(g: *Game) void {
         const frozen = g.time_stop > 0;
+        // A fast round: monsters with 2 actions already took one in the
+        // first half (`halfRoundTurn`).
+        const split = g.speed > 0;
         if (g.time_stop_fresh) {
             g.time_stop_fresh = false; // the round it was drunk in is free
         } else if (g.time_stop > 0) {
@@ -1638,8 +1642,21 @@ pub const Game = struct {
         if (!frozen) {
             if (g.rival.status == .here) g.rivalTurn(hidden);
             if (g.state != .playing) return;
-            g.monstersTurn(hidden);
-            if (slow and g.state == .playing) g.monstersTurn(hidden);
+            g.monstersTurn(hidden, split);
+            if (slow and g.state == .playing) g.monstersTurn(hidden, false);
+        }
+    }
+
+    /// The first half of a fast round: the world waits, except monsters
+    /// with 2 actions per round (rats), which play like the fast hero and
+    /// take one action now and one after the hero's second action.
+    fn halfRoundTurn(g: *Game) void {
+        if (g.time_stop > 0 or g.state != .playing) return;
+        const hidden = g.invisible > 0;
+        for (g.monsters[0..g.monster_count]) |*m| {
+            if (m.kind.actions() < 2) continue;
+            g.monsterAct(m, hidden);
+            if (g.state != .playing) return;
         }
     }
 
@@ -2202,7 +2219,7 @@ pub const Game = struct {
     /// Every monster acts once. While the hero is `hidden` (invisible), no
     /// monster knows where the hero is: they only wander, even next to
     /// the hero, so a chase stops and nobody bites.
-    fn monstersTurn(g: *Game, hidden: bool) void {
+    fn monstersTurn(g: *Game, hidden: bool, split: bool) void {
         for (g.monsters[0..g.monster_count]) |*m| {
             // A brute acts every other round.
             if (m.kind == .brute) {
@@ -2210,7 +2227,10 @@ pub const Game = struct {
                 m.rested = !resting;
                 if (resting) continue;
             }
-            for (0..m.kind.actions()) |_| {
+            // In a fast round (`split`), one of the actions was already
+            // taken in the first half.
+            const n = if (split and m.kind.actions() > 1) m.kind.actions() - 1 else m.kind.actions();
+            for (0..n) |_| {
                 g.monsterAct(m, hidden);
                 if (g.state != .playing) return;
             }
@@ -5918,6 +5938,44 @@ test "a rat acts twice per round" {
     g.monsters[0].pos.x = 2;
     g.step(.wait);
     try testing.expectEqual(@as(i32, start_max_hp - 2), g.hp);
+}
+
+test "with speed a rat acts once after each of the hero's actions" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "##############################",
+        "#@....r......................#",
+        "##############################",
+    });
+    g.speed = speed_turns;
+    // Actions 1..4: the rat walks 1 tile after every action (not 2 at once).
+    var x: i32 = 6;
+    for (0..4) |_| {
+        g.step(.wait);
+        x -= 1;
+        try testing.expectEqual(x, g.monsters[0].pos.x);
+    }
+    // Next to the hero: one bite after every action.
+    try testing.expectEqual(@as(i32, 2), x);
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp - 1), g.hp);
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp - 2), g.hp);
+}
+
+test "with speed and time stop a rat stays frozen in both halves" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "##############################",
+        "#@....r......................#",
+        "##############################",
+    });
+    g.speed = speed_turns;
+    g.time_stop = 3;
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, 6), g.monsters[0].pos.x);
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, 6), g.monsters[0].pos.x);
 }
 
 test "a rat has 1 HP and dies in one hit" {
