@@ -58,6 +58,7 @@ Its name is shown as just `???` everywhere (label, inventory line, shop, chest m
 While `isCursed()` (slow, paralyzed, blind or confused) the hero's `@` is red (a user rule). Tests: `"a mystery potion is good half the time and a curse the other half"`, `"a mystery potion works at full health and says what it was"`, one test per curse, `"the hero is red while cursed"`.
 
 - A health potion at full HP is refused: `drink` returns false and the action uses no turn (`step` returns before the round ends). Every other potion works at full health.
+- Every potion works while speed or time stop is active (tests `"every potion can be drunk while fast..."` and `"...during time stop"`). Drinking speed while fast, or time stop while stopped, resets the counter and says so ("You feel fast again!..." / "Time stops again!..."), so it does not look like nothing happened.
 - Status line: `TIME STOP N`, `SPEED N`, `STRENGTH +B (N)`, `VISION N`, `INVISIBLE N` (`writeHeader`).
 - Each kind sets its `events.*` flag, which plays its sound (see [sound.md](sound.md)).
 - How the durations count (rounds, fresh flags, speed): [rounds.md](rounds.md).

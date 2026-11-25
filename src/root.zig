@@ -2107,15 +2107,23 @@ pub const Game = struct {
     fn applyPotion(g: *Game, kind: Potion) void {
         switch (kind) {
             .time_stop => {
+                const renewed = g.time_stop > 0;
                 g.time_stop = time_stop_turns; // drinking again resets, never adds
                 g.time_stop_fresh = true;
                 g.events.time_stop = true;
-                g.message = "Time stops! The monsters are frozen.";
+                g.message = if (renewed)
+                    "Time stops again! The monsters stay frozen for 3 more rounds."
+                else
+                    "Time stops! The monsters are frozen.";
             },
             .speed => {
+                const renewed = g.speed > 0;
                 g.speed = speed_turns; // drinking again resets, never adds
                 g.events.speed = true;
-                g.message = "You feel fast!";
+                g.message = if (renewed)
+                    "You feel fast again! The speed lasts 10 rounds."
+                else
+                    "You feel fast!";
             },
             .vision => {
                 g.vision = vision_turns; // drinking again resets, never adds
@@ -4027,6 +4035,51 @@ test "time stop drunk in the first half of a fast round still gives 3 free round
     }
     g.step(.wait); // action 12: the round closes with time running
     try testing.expectEqual(@as(i32, 5 - monster_damage), g.hp);
+}
+
+test "every potion can be drunk while fast, in both halves of a round" {
+    for (std.enums.values(Potion)) |kind| {
+        for ([_]bool{ false, true }) |second_half| {
+            var prng = std.Random.DefaultPrng.init(1);
+            var g = testGame(&prng, pocket_layout);
+            g.hp = 1; // a health potion has something to heal
+            g.speed = speed_turns;
+            g.half_round = second_half;
+            g.inventory.add(kind);
+            g.step(.use_1);
+            try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(kind));
+            try testing.expect(!std.mem.eql(u8, g.message, "You have no item with that number."));
+        }
+    }
+}
+
+test "every potion can be drunk during time stop" {
+    for (std.enums.values(Potion)) |kind| {
+        var prng = std.Random.DefaultPrng.init(1);
+        var g = testGame(&prng, pocket_layout);
+        g.hp = 1;
+        g.time_stop = time_stop_turns;
+        g.inventory.add(kind);
+        g.step(.use_1);
+        try testing.expectEqual(@as(u32, 0), g.inventory.potionCount(kind));
+    }
+}
+
+test "drinking speed while fast and time stop while stopped says the effect was renewed" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, pocket_layout);
+    g.inventory.add(.speed);
+    g.inventory.add(.speed);
+    g.inventory.add(.time_stop);
+    g.inventory.add(.time_stop);
+    g.step(.use_1);
+    try testing.expectEqualStrings("You feel fast!", g.message);
+    g.step(.use_1);
+    try testing.expectEqualStrings("You feel fast again! The speed lasts 10 rounds.", g.message);
+    g.step(.use_1);
+    try testing.expectEqualStrings("Time stops! The monsters are frozen.", g.message);
+    g.step(.use_1);
+    try testing.expectEqualStrings("Time stops again! The monsters stay frozen for 3 more rounds.", g.message);
 }
 
 test "drinking speed again resets the counter" {
