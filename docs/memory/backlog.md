@@ -22,7 +22,7 @@ The user chose these four directions to make the game more fun. They do not all 
 
 - [x] **Rival adventurer.** Done on 2026-11-19. See [features/rival.md](features/rival.md).
 - [ ] Dog companion (`d`): follows the hero, bites monsters, chases thieves, growls at ghosts.
-- [ ] Local high scores (top 10 in a file, `Best: level N` in the header).
+- [x] Local high scores. Done on 2026-11-26: top 10 in `scores.txt` next to the exe, listed on the title screen, with a "New record!" notice (no header text, by the user's choice). See [features/scores.md](features/scores.md).
 - [ ] Daily challenge (the seed comes from the date, so everyone plays the same dungeon).
 - [ ] Other ideas: a mercenary hired at the shop, a prisoner to rescue, a fairy narrator, a reaper that chases slow players.
 - A peaceful rival can block a corridor: bumping it is an attack (which makes it fight back). Not requested.

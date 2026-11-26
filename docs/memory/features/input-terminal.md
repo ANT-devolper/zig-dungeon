@@ -20,6 +20,7 @@ A user request: every key press acts at once, as if Enter were pressed after it.
 
 - `Title` in `src/root.zig` (pure, tested): `key()` handles `w`/`s` (cursor), `\r` (Enter confirms), `p` (play), `q` (quit); `render()` draws the name (`title_name`) in a wall frame, the menu with a `>` cursor and the last run (`LastRun`).
 - `main.zig`: without `--no-title`, a loop: `drawTitle`, then Play starts a new `Game` and `playRun`. When the run ends (death or `q`), its last frame stays with "Press any key to return to the title." (the defeat jingle plays here), then the title comes back. Quit, Ctrl+C or the end of the input close the game.
+- The title also lists the **best runs** and the end-of-run screen says "New record!" or the rank (user request, 2026-11-26): see [scores](scores.md).
 - `--no-title` (combines with `--mute`): one run straight away, then the old ending (the jingle waits about 900 ms before exiting).
 - On exit, the last run's frame and final score are printed after leaving the alternate screen; nothing if no run was played.
 - Redirected input: Enter in a file is `\n`, which `readKey` skips, so smoke tests press `p` on the title or use `--no-title`.

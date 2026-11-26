@@ -3167,6 +3167,75 @@ pub const TitleChoice = enum { play, quit };
 /// The result of the last run, shown on the title screen.
 pub const LastRun = struct { level: u32, gold: u32 };
 
+/// How many runs the high score list keeps.
+pub const max_scores = 10;
+
+/// The best runs, deepest level first and then most gold. A tie goes after
+/// the older runs. Stored in a text file, one `<level> <gold>` per line.
+pub const Scores = struct {
+    runs: [max_scores]LastRun = undefined,
+    count: usize = 0,
+
+    pub fn items(s: *const Scores) []const LastRun {
+        return s.runs[0..s.count];
+    }
+
+    fn better(a: LastRun, b: LastRun) bool {
+        return a.level > b.level or (a.level == b.level and a.gold > b.gold);
+    }
+
+    /// Inserts a run in order. Returns its 0-based rank, or null when it
+    /// does not make the top `max_scores` (the last run drops when full).
+    pub fn add(s: *Scores, run: LastRun) ?usize {
+        var pos = s.count;
+        while (pos > 0 and better(run, s.runs[pos - 1])) pos -= 1;
+        if (pos >= max_scores) return null;
+        var i = @min(s.count, max_scores - 1);
+        while (i > pos) : (i -= 1) s.runs[i] = s.runs[i - 1];
+        s.runs[pos] = run;
+        s.count = @min(s.count + 1, max_scores);
+        return pos;
+    }
+
+    /// Reads the file text. Bad lines and level 0 are skipped; every run
+    /// goes through `add`, so the result is sorted and capped.
+    pub fn parse(text: []const u8) Scores {
+        var s: Scores = .{};
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        while (lines.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t\r");
+            var parts = std.mem.tokenizeScalar(u8, line, ' ');
+            const level_text = parts.next() orelse continue;
+            const gold_text = parts.next() orelse continue;
+            const level = std.fmt.parseInt(u32, level_text, 10) catch continue;
+            const gold = std.fmt.parseInt(u32, gold_text, 10) catch continue;
+            if (level == 0) continue;
+            _ = s.add(.{ .level = level, .gold = gold });
+        }
+        return s;
+    }
+
+    /// Writes the list in the file's format.
+    pub fn write(s: *const Scores, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        for (s.items()) |run| try w.print("{d} {d}\n", .{ run.level, run.gold });
+    }
+};
+
+/// The end-of-run notice for a run that ranked `rank` (0-based) in the
+/// scores: "New record!" for the best run, its place otherwise, nothing
+/// when it did not make the list.
+pub fn writeRecord(w: *std.Io.Writer, color: bool, rank: ?usize) std.Io.Writer.Error!void {
+    const r = rank orelse return;
+    if (r == 0) {
+        if (color) try w.writeAll(ansi_yellow);
+        try w.writeAll("New record!");
+        if (color) try w.writeAll(ansi_reset);
+        try w.writeByte('\n');
+    } else {
+        try w.print("Rank {d} in the top {d}.\n", .{ r + 1, max_scores });
+    }
+}
+
 /// The game's name, shown in a wall frame as wide as the map.
 const title_name = "B R E W D U N G E O N";
 
@@ -3192,7 +3261,14 @@ pub const Title = struct {
     /// Draws the title screen to any Writer.
     /// Every line fits the game's width: the map's `W` columns plus the
     /// 1-column indent the map rows have.
-    pub fn render(t: *const Title, w: *std.Io.Writer, color: bool, last: ?LastRun) std.Io.Writer.Error!void {
+    pub fn render(
+        t: *const Title,
+        w: *std.Io.Writer,
+        color: bool,
+        last: ?LastRun,
+        scores: *const Scores,
+        last_rank: ?usize,
+    ) std.Io.Writer.Error!void {
         const wall: [W]u8 = @splat('#');
         try w.print("\n {s}\n", .{&wall});
         try frameLine(w, "", color);
@@ -3217,6 +3293,16 @@ pub const Title = struct {
         }
         if (last) |run| {
             try w.print("\n   Last run: level {d}, {d} gold\n", .{ run.level, run.gold });
+        }
+        if (scores.count > 0) {
+            try w.writeAll("\n   Best runs\n");
+            for (scores.items(), 0..) |run, i| {
+                const mine = last_rank != null and last_rank.? == i;
+                if (mine and color) try w.writeAll(ansi_cyan);
+                try w.print("   {d:>2}. level {d:>3}  {d:>5} gold{s}", .{ i + 1, run.level, run.gold, if (mine) " <" else "" });
+                if (mine and color) try w.writeAll(ansi_reset);
+                try w.writeByte('\n');
+            }
         }
         try w.writeAll("\n   [w/s] select  [Enter] confirm\n");
     }
@@ -3276,7 +3362,7 @@ test "the title screen shows the name, the menu and the last run" {
     var buf: [4096]u8 = undefined;
     var t: Title = .{};
     var w: std.Io.Writer = .fixed(&buf);
-    try t.render(&w, false, null);
+    try t.render(&w, false, null, &.{}, null);
     var out = w.buffered();
     try testing.expect(std.mem.indexOf(u8, out, "#    " ++ title_name ++ "    #") != null);
     try testing.expect(std.mem.indexOf(u8, out, "> Play\n             Quit\n") != null);
@@ -3286,11 +3372,112 @@ test "the title screen shows the name, the menu and the last run" {
     while (lines.next()) |line| try testing.expect(line.len <= W + 1);
     _ = t.key('s');
     w = .fixed(&buf);
-    try t.render(&w, true, .{ .level = 7, .gold = 120 });
+    try t.render(&w, true, .{ .level = 7, .gold = 120 }, &.{}, null);
     out = w.buffered();
     try testing.expect(std.mem.indexOf(u8, out, "Play\n           " ++ ansi_cyan ++ "> Quit") != null);
     try testing.expect(std.mem.indexOf(u8, out, "Last run: level 7, 120 gold") != null);
     try testing.expect(std.mem.indexOf(u8, out, ansi_yellow ++ title_name ++ ansi_reset) != null);
+}
+
+test "scores are sorted by level, then gold, and keep only 10" {
+    var s: Scores = .{};
+    _ = s.add(.{ .level = 3, .gold = 50 });
+    _ = s.add(.{ .level = 5, .gold = 10 });
+    _ = s.add(.{ .level = 3, .gold = 80 });
+    try testing.expectEqual(@as(usize, 3), s.count);
+    try testing.expectEqual(@as(u32, 5), s.items()[0].level);
+    try testing.expectEqual(@as(u32, 80), s.items()[1].gold);
+    try testing.expectEqual(@as(u32, 50), s.items()[2].gold);
+    var level: u32 = 10;
+    while (level < 25) : (level += 1) _ = s.add(.{ .level = level, .gold = 0 });
+    try testing.expectEqual(@as(usize, max_scores), s.count);
+    try testing.expectEqual(@as(u32, 24), s.items()[0].level);
+    try testing.expectEqual(@as(u32, 15), s.items()[max_scores - 1].level);
+}
+
+test "add returns the rank, or null below the top 10, and ties go after older runs" {
+    var s: Scores = .{};
+    try testing.expectEqual(@as(?usize, 0), s.add(.{ .level = 4, .gold = 20 }));
+    try testing.expectEqual(@as(?usize, 0), s.add(.{ .level = 6, .gold = 0 }));
+    try testing.expectEqual(@as(?usize, 2), s.add(.{ .level = 4, .gold = 20 })); // tie: after the older one
+    try testing.expectEqual(@as(?usize, 3), s.add(.{ .level = 1, .gold = 0 }));
+    var i: u32 = 0;
+    while (i < 6) : (i += 1) _ = s.add(.{ .level = 20 + i, .gold = 0 });
+    try testing.expectEqual(@as(usize, max_scores), s.count);
+    try testing.expectEqual(@as(?usize, null), s.add(.{ .level = 1, .gold = 0 }));
+    try testing.expectEqual(@as(?usize, max_scores - 1), s.add(.{ .level = 2, .gold = 0 }));
+}
+
+test "parse skips bad lines, carriage returns and level 0" {
+    const s = Scores.parse("3 40\r\nnope\n\n0 99\n7\n  9   5  \nx 1\n5 -2\n2 10");
+    try testing.expectEqual(@as(usize, 3), s.count);
+    try testing.expectEqual(LastRun{ .level = 9, .gold = 5 }, s.items()[0]);
+    try testing.expectEqual(LastRun{ .level = 3, .gold = 40 }, s.items()[1]);
+    try testing.expectEqual(LastRun{ .level = 2, .gold = 10 }, s.items()[2]);
+}
+
+test "parse sorts and caps an edited file" {
+    const s = Scores.parse("1 0\n2 0\n3 0\n4 0\n5 0\n6 0\n7 0\n8 0\n9 0\n10 0\n11 0\n12 0\n");
+    try testing.expectEqual(@as(usize, max_scores), s.count);
+    try testing.expectEqual(@as(u32, 12), s.items()[0].level);
+    try testing.expectEqual(@as(u32, 3), s.items()[max_scores - 1].level);
+}
+
+test "scores written and parsed again are the same" {
+    var s: Scores = .{};
+    _ = s.add(.{ .level = 8, .gold = 120 });
+    _ = s.add(.{ .level = 8, .gold = 60 });
+    _ = s.add(.{ .level = 2, .gold = 0 });
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try s.write(&w);
+    try testing.expectEqualStrings("8 120\n8 60\n2 0\n", w.buffered());
+    const back = Scores.parse(w.buffered());
+    try testing.expectEqualSlices(LastRun, s.items(), back.items());
+}
+
+test "the title lists the best runs and marks the last one" {
+    var s: Scores = .{};
+    _ = s.add(.{ .level = 12, .gold = 340 });
+    _ = s.add(.{ .level = 7, .gold = 120 });
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    const t: Title = .{};
+    try t.render(&w, false, .{ .level = 7, .gold = 120 }, &s, 1);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "Best runs") != null);
+    try testing.expect(std.mem.indexOf(u8, out, " 1. level  12    340 gold\n") != null);
+    try testing.expect(std.mem.indexOf(u8, out, " 2. level   7    120 gold <\n") != null);
+    var lines = std.mem.splitScalar(u8, out, '\n');
+    while (lines.next()) |line| try testing.expect(line.len <= W + 1);
+    // With colors the last run's row is cyan.
+    w = .fixed(&buf);
+    try t.render(&w, true, null, &s, 0);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), ansi_cyan ++ "    1. level  12") != null);
+}
+
+test "the title shows no best runs when there are none" {
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    const t: Title = .{};
+    try t.render(&w, false, null, &.{}, null);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "Best runs") == null);
+}
+
+test "writeRecord says New record! for rank 0, the rank otherwise, nothing for null" {
+    var buf: [128]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeRecord(&w, false, 0);
+    try testing.expectEqualStrings("New record!\n", w.buffered());
+    w = .fixed(&buf);
+    try writeRecord(&w, false, 3);
+    try testing.expectEqualStrings("Rank 4 in the top 10.\n", w.buffered());
+    w = .fixed(&buf);
+    try writeRecord(&w, true, null);
+    try testing.expectEqual(@as(usize, 0), w.buffered().len);
+    w = .fixed(&buf);
+    try writeRecord(&w, true, 0);
+    try testing.expectEqualStrings(ansi_yellow ++ "New record!" ++ ansi_reset ++ "\n", w.buffered());
 }
 
 fn testGame(prng: *std.Random.DefaultPrng, layout: Layout) Game {

@@ -24,6 +24,7 @@ If a page and the code disagree, **the code wins**: fix the page in the same cha
 | Fountain levels, offerings, totems, max HP | [features/fountains-totems.md](features/fountains-totems.md) | `loadFountain`, `makeOffering`, `touchTotem`, `spawnTotem`, `Game.max_hp` |
 | The rival adventurer (AI, off-screen race, hostility) | [features/rival.md](features/rival.md) | `Rival`, `RivalStatus`, `huntChance`, `rivalTurn`, `rivalAwayRound`, `rivalOnNewLevel` |
 | Level-up perks (levels 4, 7, 10...) | [features/perks.md](features/perks.md) | `Perk`, `choosePerk`, `perk_pending`, `renderPerks`, `damage_bonus` |
+| High scores (top 10, `scores.txt`) | [features/scores.md](features/scores.md) | `Scores`, `writeRecord`, `recordRun`, `loadScores` |
 | Rounds, timed effects, speed | [features/rounds.md](features/rounds.md) | `endRound`, `half_round`, `*_fresh` |
 | Keyboard input, terminal, alternate screen | [features/input-terminal.md](features/input-terminal.md) | `term.RawMode`, `readKey`, `alt_screen_on` |
 | Colors, frames, animations | [features/rendering.md](features/rendering.md) | `render`, `RenderOptions`, `writeHeader`, `playHitEffect` |

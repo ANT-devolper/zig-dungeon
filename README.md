@@ -42,7 +42,7 @@ zig build -Doptimize=ReleaseFast  # optimized build
 ./zig-out/bin/brewdungeon         # on Windows: .\zig-out\bin\brewdungeon.exe
 ```
 
-The game opens on a **title screen** with **Play** and **Quit**: `w`/`s` (or `k`/`j`, or the Up/Down arrows) move the cursor and **Enter** confirms (or press `p` to play, `q` to quit). When a run ends, its last screen stays until you press a key, then the title comes back with your last result, so you can play again. To skip the title and start a run right away:
+The game opens on a **title screen** with **Play** and **Quit**: `w`/`s` (or `k`/`j`, or the Up/Down arrows) move the cursor and **Enter** confirms (or press `p` to play, `q` to quit). When a run ends, its last screen stays until you press a key, then the title comes back with your last result, so you can play again. The title also lists your **best 10 runs** (deepest level first, then gold; your last run is marked with `<`), and the end of a run says **New record!** or your rank. They are kept in `scores.txt` next to the executable (`zig-out/bin/scores.txt`); delete that file to reset them. To skip the title and start a run right away:
 
 ```sh
 zig build run -- --no-title

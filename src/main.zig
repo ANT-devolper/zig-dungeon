@@ -18,6 +18,44 @@ var in_dungeon = false;
 /// Set when the game closes from the panic screen: nothing from the game is
 /// printed on exit, so the disguise holds.
 var closed_hidden = false;
+/// The best runs, kept in `scores.txt` next to the executable.
+var scores: brewdungeon.Scores = .{};
+
+const scores_file = "scores.txt";
+
+/// The full path of the scores file, in the executable's folder.
+fn scoresPath(io: Io, buf: []u8) ?[]const u8 {
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = std.process.executableDirPath(io, &dir_buf) catch return null;
+    return std.fmt.bufPrint(buf, "{s}{c}{s}", .{ dir_buf[0..n], std.fs.path.sep, scores_file }) catch null;
+}
+
+/// Reads the scores file; a missing or unreadable file gives an empty list.
+fn loadScores(io: Io) void {
+    var path_buf: [std.fs.max_path_bytes + scores_file.len + 1]u8 = undefined;
+    const path = scoresPath(io, &path_buf) orelse return;
+    var buf: [1024]u8 = undefined;
+    const text = Io.Dir.cwd().readFile(io, path, &buf) catch return;
+    scores = brewdungeon.Scores.parse(text);
+}
+
+/// Writes the scores file. Errors are ignored: the game never fails over it.
+fn saveScores(io: Io) void {
+    var path_buf: [std.fs.max_path_bytes + scores_file.len + 1]u8 = undefined;
+    const path = scoresPath(io, &path_buf) orelse return;
+    var buf: [1024]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    scores.write(&w) catch return;
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = w.buffered() }) catch {};
+}
+
+/// Adds a finished run to the scores and saves them. Returns its rank, or
+/// null when it did not make the list.
+fn recordRun(io: Io, game: *const brewdungeon.Game) ?usize {
+    const rank = scores.add(.{ .level = game.level, .gold = game.inventory.gold });
+    saveScores(io);
+    return rank;
+}
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -57,17 +95,22 @@ pub fn main(init: std.process.Init) !void {
     try out.flush();
     errdefer leaveScreen(out) catch {};
 
-    // The last run played, printed after leaving the alternate screen.
+    loadScores(io);
+
+    // The last run played, printed after leaving the alternate screen, and
+    // its place in the scores.
     var last: ?brewdungeon.Game = null;
+    var last_rank: ?usize = null;
     if (no_title) {
         // --no-title: straight into one run.
         var game = brewdungeon.Game.init(prng.random());
         _ = try playRun(io, in, out, &game);
         last = game;
+        last_rank = recordRun(io, &game);
     } else {
         var title: brewdungeon.Title = .{};
         while (true) {
-            try drawTitle(out, &title, last);
+            try drawTitle(out, &title, last, last_rank);
             const key = try readKey(in) orelse break; // EOF
             if (key == ctrl_c) break;
             if (key == brewdungeon.panic_key) {
@@ -80,6 +123,7 @@ pub fn main(init: std.process.Init) !void {
             var game = brewdungeon.Game.init(prng.random());
             const exit = try playRun(io, in, out, &game);
             last = game;
+            last_rank = recordRun(io, &game); // also when the game is closing
             if (exit) break;
 
             // The run is over: its last frame stays until a key, then the
@@ -87,7 +131,9 @@ pub fn main(init: std.process.Init) !void {
             if (game.state == .lost) playSfx(.lost);
             const any = while (true) {
                 try drawFrame(out, &game, .{ .color = true });
-                try out.writeAll("\nPress any key to return to the title.\n");
+                try out.writeByte('\n');
+                try brewdungeon.writeRecord(out, true, last_rank);
+                try out.writeAll("Press any key to return to the title.\n");
                 try out.flush();
                 const k = try readKey(in) orelse break ctrl_c;
                 if (k != brewdungeon.panic_key) break k;
@@ -111,6 +157,7 @@ pub fn main(init: std.process.Init) !void {
         .dead => try out.print("Your rival died on level {d}.\n", .{game.rival.level}),
         .here, .away => try out.print("Your rival reached level {d}.\n", .{game.rival.level}),
     }
+    try brewdungeon.writeRecord(out, true, last_rank);
     try out.flush();
 
     // With --no-title the defeat jingle plays here. Wait for it, or it is
@@ -223,10 +270,10 @@ fn perkScreen(in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bool {
 }
 
 /// Clears the screen and draws the title screen.
-fn drawTitle(out: *Io.Writer, title: *const brewdungeon.Title, last: ?brewdungeon.Game) !void {
+fn drawTitle(out: *Io.Writer, title: *const brewdungeon.Title, last: ?brewdungeon.Game, last_rank: ?usize) !void {
     try out.writeAll("\x1b[2J\x1b[H");
     const run: ?brewdungeon.LastRun = if (last) |g| .{ .level = g.level, .gold = g.inventory.gold } else null;
-    try title.render(out, true, run);
+    try title.render(out, true, run, &scores, last_rank);
     try out.flush();
 }
 
