@@ -4,6 +4,7 @@ One entry per change, newest first. Format: `date` `hash` subject, then what cha
 
 ## 2026-11-26
 
+- `(this commit)` feat: offer a perk every 3 levels. On arriving at level 4, 7, 10... a level-up screen offers +3 max HP, +1 permanent damage or a full heal (keys 1/2/3, no turn used). New `Perk`, `choosePerk`, `renderPerks`, `Game.damage_bonus`/`perk_pending`/`perk_taken`; `attackDamage` includes the bonus; the inventory shows "Attack damage"; the help line says `[wasd/hjkl]`. ([perks](features/perks.md))
 - `(this commit)` feat: add vim movement keys h j k l. `parseCommand` maps `h/j/k/l` to left/down/up/right next to WASD, and `Title.key` moves the cursor with `k`/`j`. README updated. ([input-terminal](features/input-terminal.md))
 
 ## 2026-11-19

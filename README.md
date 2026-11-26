@@ -20,7 +20,7 @@ DUNGEON  Level 1   HP 10/10   Gold 0
 ###############################
 
 Find the stairs (>)! Beware of the monsters (M).
-[w/a/s/d] move  [.] wait  [i] inventory  [m] music  [q] quit
+[wasd/hjkl] move  [.] wait  [i] inventory  [m] music  [q] quit
 ```
 
 ## Requirements
@@ -100,6 +100,7 @@ Press a key. It acts at once, with no need to press **Enter**:
 - Monsters chase you once you are within their sight: 4 tiles for `M` and slimes, 5 for rats and thieves, 2 for brutes and 6 for ghosts. Level 1 has only `M`; the other kinds join from the level shown in the symbol table, and the number of monsters per level stays the same. Farther away, they wander around at random. A monster next to you bites for 1 damage per turn.
 - Taking damage flashes and shakes the screen. The hero turns red and the attacking monster is drawn white on red.
 - Take the stairs to go down a level. Your HP and gold carry over.
+- **Level-up perks.** Every time the monsters get tougher, on arriving at level 4, 7, 10... a level-up screen asks you to pick one perk with `1`, `2` or `3`: **+3 max HP** (and the 3 new HP), **+1 damage** for the rest of the run, or a **full heal**. You can pick the same perk again later. Choosing takes no turn.
 - The dungeon has **no bottom**: every level is a new maze, and the goal is to go **as deep as you can**. Levels 1, 2 and 3 have 3, 5 and 7 monsters, and from level 4 on there are 8. Monsters also get tougher: 3 HP on levels 1-3, then **+1 HP every 3 levels** (4 HP on levels 4-6, 5 HP on 7-9, ...). Their bite always does 1 damage.
 - Every level is a randomly generated maze with a few shortcuts, so each run is different. The stairs are always reachable at the far end of the maze, and loot tends to hide in dead ends. Each item spot holds gold or, 1 time in 4, a chest. A chest holds either 20 to 50 gold or a potion.
 - Most chests (85%) hold a potion; the other 15% hold gold (never both). Chest potions are a **time stop potion** 10% of the time, a **speed potion** 15% of the time, a **vision potion** 10% of the time, an **invisibility potion** 10% of the time and a **mystery potion** 10% of the time; these are single kinds with no sizes. Another 15% are **strength potions**: small (+1 damage, 50%), medium (+2 damage, 35%) or large (+3 damage, 15%). The other 30% are health potions: small (+1 HP, 50%), medium (+3 HP, 35%) or large (+5 HP, 15%).

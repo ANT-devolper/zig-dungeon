@@ -70,6 +70,10 @@ const fountain_heal = 5;
 /// Gold the fountain's offering costs, and the max HP it gives (once).
 const offering_price = 40;
 const offering_max_hp = 2;
+/// Level-up perks (see `Perk`): offered on arriving at levels 4, 7, 10...
+/// (every `monster_hp_step` levels). Max HP gained and permanent damage.
+const perk_max_hp = 3;
+const perk_damage = 1;
 /// Chance (in %) that a maze level holds a totem (never two levels in a row).
 const totem_chance = 10;
 /// Chance (in %) that a totem heals completely; otherwise it curses.
@@ -612,6 +616,31 @@ pub const Inventory = struct {
 
 pub const State = enum { playing, lost, quit };
 
+/// A level-up perk: the hero picks one when arriving at level 4, 7, 10...
+pub const Perk = enum {
+    max_hp,
+    damage,
+    heal,
+
+    pub fn label(p: Perk) []const u8 {
+        return switch (p) {
+            .max_hp => "+3 max HP",
+            .damage => "+1 damage",
+            .heal => "Full heal",
+        };
+    }
+};
+
+/// The perk a key chooses on the level-up screen: `1`, `2` or `3`.
+pub fn perkKey(k: u8) ?Perk {
+    return switch (k) {
+        '1' => .max_hp,
+        '2' => .damage,
+        '3' => .heal,
+        else => null,
+    };
+}
+
 /// Things that happened during the last turn (used for sound effects).
 /// Strikes and damage are tracked by `hit_pos`, `hit_killed` and `damage_taken`.
 pub const Events = struct {
@@ -752,6 +781,13 @@ pub const Game = struct {
     hp: i32 = start_max_hp,
     /// Max HP: `start_max_hp`, raised by offerings at fountains.
     max_hp: i32 = start_max_hp,
+    /// Permanent extra attack damage from the damage perk.
+    damage_bonus: i32 = 0,
+    /// A level-up perk is waiting to be chosen (`choosePerk`); the hero
+    /// cannot act until then.
+    perk_pending: bool = false,
+    /// The perk chosen during the last turn, if any.
+    perk_taken: ?Perk = null,
     inventory: Inventory = .{},
     level: u32 = 1,
     monsters: [max_monsters]Monster = undefined,
@@ -991,6 +1027,26 @@ pub const Game = struct {
             g.events.curse = true;
             g.applyCurse(c); // sets the message; render() adds "(a totem curse)"
         }
+    }
+
+    /// Applies the chosen level-up perk. Does nothing when none is pending.
+    /// Not a turn: the monsters do not act. render() appends the effect.
+    pub fn choosePerk(g: *Game, p: Perk) void {
+        if (!g.perk_pending) return;
+        g.perk_pending = false;
+        g.perk_taken = p;
+        g.healed = 0;
+        g.events = .{};
+        switch (p) {
+            .max_hp => {
+                g.max_hp += perk_max_hp;
+                g.hp += perk_max_hp;
+            },
+            .damage => g.damage_bonus += perk_damage,
+            .heal => g.heal(g.max_hp),
+        }
+        g.events.buy = true;
+        g.message = "You feel stronger!";
     }
 
     /// Heals up to `amount` HP, never past `max_hp`; records it in `healed`.
@@ -1436,8 +1492,14 @@ pub const Game = struct {
         if (g.state != .playing) return;
         // Looking at the inventory is free: no turn passes, nothing changes.
         if (cmd == .inventory) return;
+        // A pending level-up perk blocks every action except quitting.
+        if (g.perk_pending and cmd != .quit) {
+            g.message = "Choose a perk first.";
+            return;
+        }
 
         g.damage_taken = 0;
+        g.perk_taken = null;
         g.hit_pos = null;
         g.hit_killed = false;
         g.events = .{};
@@ -1588,6 +1650,9 @@ pub const Game = struct {
                         else
                             "You go down the stairs...";
                         g.half_round = false; // a new level starts a new round
+                        // Every `monster_hp_step` levels (4, 7, 10...) the hero
+                        // picks a perk, as the monsters get tougher.
+                        g.perk_pending = (g.level - 1) % monster_hp_step == 0;
                         return; // new level: monsters do not act this turn
                     },
                 }
@@ -1672,7 +1737,7 @@ pub const Game = struct {
 
     /// Damage the hero's attack deals, including any strength bonus.
     pub fn attackDamage(g: *const Game) i32 {
-        return hero_damage + g.strength_bonus;
+        return hero_damage + g.strength_bonus + g.damage_bonus;
     }
 
     /// The damage of the hero's attack on a monster or the rival. A target
@@ -2542,6 +2607,14 @@ pub const Game = struct {
             try w.print(" (+{d} max HP, -{d} gold)", .{ offering_max_hp, offering_price });
             if (opts.color) try w.writeAll(ansi_reset);
         }
+        if (g.perk_taken) |p| {
+            // A full heal adds nothing here: the "(+N HP)" below shows it.
+            if (p != .heal) {
+                if (opts.color) try w.writeAll(ansi_green);
+                try w.print(" ({s})", .{p.label()});
+                if (opts.color) try w.writeAll(ansi_reset);
+            }
+        }
         if (g.offering_refused) {
             try w.print(" (the offering costs {d} gold, you have {d})", .{ offering_price, g.inventory.gold });
         }
@@ -2593,7 +2666,7 @@ pub const Game = struct {
             }
         }
         if (g.state == .playing) {
-            try w.writeAll("[w/a/s/d] move  [.] wait  [i] inventory  [m] music  [q] quit\n");
+            try w.writeAll("[wasd/hjkl] move  [.] wait  [i] inventory  [m] music  [q] quit\n");
         }
     }
 
@@ -2700,6 +2773,7 @@ pub const Game = struct {
         }
 
         if (empty) try w.writeAll("  (empty)\n\n");
+        try w.print("  Attack damage .......... {d}\n", .{g.attackDamage()});
         try w.writeAll("===============================\n");
         if (items.len == 1) {
             try w.writeAll("[1] use (uses a turn)   ");
@@ -2707,6 +2781,20 @@ pub const Game = struct {
             try w.print("[1-{d}] use (uses a turn)   ", .{items.len});
         }
         try w.writeAll("[other key] close\n");
+    }
+
+    /// Draws the level-up screen (the perk choice) to any Writer.
+    pub fn renderPerks(g: *const Game, w: *std.Io.Writer, color: bool) std.Io.Writer.Error!void {
+        try g.writeHeader(w);
+        try w.writeAll("========== LEVEL UP ==========\n\n");
+        try w.print("  You reached level {d}. Choose a perk:\n\n", .{g.level});
+        const on = if (color) ansi_green else "";
+        const off = if (color) ansi_reset else "";
+        try w.print("  {s}[1]{s} {s} (max HP {d} -> {d})\n", .{ on, off, Perk.max_hp.label(), g.max_hp, g.max_hp + perk_max_hp });
+        try w.print("  {s}[2]{s} {s} (damage {d} -> {d})\n", .{ on, off, Perk.damage.label(), g.attackDamage(), g.attackDamage() + perk_damage });
+        try w.print("  {s}[3]{s} {s} (HP {d} -> {d})\n", .{ on, off, Perk.heal.label(), g.hp, g.max_hp });
+        try w.writeAll("\n==============================\n");
+        try w.writeAll("[1-3] choose\n");
     }
 
     /// A quantity in the inventory, green when colors are on.
@@ -3262,6 +3350,139 @@ test "vim keys j and k move the title cursor" {
     try testing.expectEqual(TitleChoice.quit, t.selected);
     try testing.expectEqual(@as(?TitleChoice, null), t.key('k'));
     try testing.expectEqual(TitleChoice.play, t.selected);
+}
+
+const perk_stairs_layout: Layout = &.{
+    "##############################",
+    "#@>..........................#",
+    "#............................#",
+};
+
+/// A game on level `level` with the hero next to the stairs.
+fn perkGame(prng: *std.Random.DefaultPrng, level: u32) Game {
+    var g = testGame(prng, perk_stairs_layout);
+    g.level = level;
+    return g;
+}
+
+test "a perk is offered when reaching levels 4, 7 and 10 only" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var level: u32 = 1;
+    while (level <= 11) : (level += 1) {
+        var g = perkGame(&prng, level);
+        g.step(.right); // take the stairs to level + 1
+        try testing.expectEqual(level + 1, g.level);
+        const offered = (level + 1) == 4 or (level + 1) == 7 or (level + 1) == 10;
+        try testing.expectEqual(offered, g.perk_pending);
+    }
+}
+
+test "the hero cannot act while a perk is pending" {
+    var prng = std.Random.DefaultPrng.init(2);
+    var g = testGame(&prng, test_layout); // a monster stands next to the hero
+    g.perk_pending = true;
+    const start = g.hero;
+    g.step(.wait);
+    g.step(.left);
+    g.step(.right); // would attack the monster
+    g.step(.use_1);
+    try testing.expect(g.hero.eql(start));
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp);
+    try testing.expectEqual(@as(i32, monster_hp), g.monsters[0].hp);
+    try testing.expectEqualStrings("Choose a perk first.", g.message);
+    try testing.expect(g.perk_pending);
+    g.step(.quit); // quitting still works
+    try testing.expectEqual(State.quit, g.state);
+}
+
+test "the max HP perk adds 3 max HP and 3 HP" {
+    var prng = std.Random.DefaultPrng.init(3);
+    var g = perkGame(&prng, 3);
+    g.step(.right);
+    g.hp = 4;
+    g.choosePerk(.max_hp);
+    try testing.expectEqual(@as(i32, start_max_hp + 3), g.max_hp);
+    try testing.expectEqual(@as(i32, 7), g.hp);
+    try testing.expect(!g.perk_pending);
+    try testing.expectEqual(@as(?Perk, .max_hp), g.perk_taken);
+    try testing.expect(g.events.buy);
+}
+
+test "the damage perk adds 1 damage for good and stacks with strength" {
+    var prng = std.Random.DefaultPrng.init(4);
+    var g = testGame(&prng, test_layout);
+    g.perk_pending = true;
+    g.choosePerk(.damage);
+    try testing.expectEqual(@as(i32, hero_damage + 1), g.attackDamage());
+    g.monsters[0].hp = 10;
+    g.step(.right); // attack the adjacent monster
+    try testing.expectEqual(@as(i32, 10 - (hero_damage + 1)), g.monsters[0].hp);
+    g.strength_bonus = 2;
+    try testing.expectEqual(@as(i32, hero_damage + 3), g.attackDamage());
+    // A second damage perk adds up.
+    g.perk_pending = true;
+    g.choosePerk(.damage);
+    try testing.expectEqual(@as(i32, hero_damage + 4), g.attackDamage());
+}
+
+test "the full heal perk heals to max HP" {
+    var prng = std.Random.DefaultPrng.init(5);
+    var g = testGame(&prng, pocket_layout);
+    g.max_hp = 13;
+    g.hp = 5;
+    g.perk_pending = true;
+    g.choosePerk(.heal);
+    try testing.expectEqual(@as(i32, 13), g.hp);
+    try testing.expectEqual(@as(i32, 13), g.max_hp);
+    try testing.expectEqual(@as(i32, 8), g.healed);
+}
+
+test "choosePerk does nothing without a pending perk" {
+    var prng = std.Random.DefaultPrng.init(6);
+    var g = testGame(&prng, test_layout);
+    g.choosePerk(.max_hp);
+    g.choosePerk(.damage);
+    try testing.expectEqual(@as(i32, start_max_hp), g.max_hp);
+    try testing.expectEqual(@as(i32, hero_damage), g.attackDamage());
+    try testing.expectEqual(@as(?Perk, null), g.perk_taken);
+}
+
+test "perk keys are 1, 2 and 3" {
+    try testing.expectEqual(@as(?Perk, .max_hp), perkKey('1'));
+    try testing.expectEqual(@as(?Perk, .damage), perkKey('2'));
+    try testing.expectEqual(@as(?Perk, .heal), perkKey('3'));
+    try testing.expectEqual(@as(?Perk, null), perkKey('4'));
+    try testing.expectEqual(@as(?Perk, null), perkKey('w'));
+}
+
+test "the level-up screen lists the three perks and the message names the gain" {
+    var prng = std.Random.DefaultPrng.init(7);
+    var g = perkGame(&prng, 3);
+    g.step(.right);
+    var buf: [2048]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderPerks(&w, false);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "LEVEL UP") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "[1] +3 max HP") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "[2] +1 damage") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "[3] Full heal") != null);
+
+    g.choosePerk(.damage);
+    var buf2: [4096]u8 = undefined;
+    var w2: std.Io.Writer = .fixed(&buf2);
+    try g.render(&w2, .{});
+    try testing.expect(std.mem.indexOf(u8, w2.buffered(), "You feel stronger! (+1 damage)") != null);
+}
+
+test "the inventory shows the attack damage" {
+    var prng = std.Random.DefaultPrng.init(8);
+    var g = testGame(&prng, test_layout);
+    g.damage_bonus = 2;
+    var buf: [2048]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try g.renderInventory(&w, false);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "Attack damage .......... 4") != null);
 }
 
 /// Reads every key from `bytes` with `readKey` until the end of the input.

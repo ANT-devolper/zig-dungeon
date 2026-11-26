@@ -183,11 +183,43 @@ fn playRun(io: Io, in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bo
             }
             game.step(cmd);
             try afterTurn(io, out, game);
+            if (game.perk_pending and try perkScreen(in, out, game)) return true;
         } else {
-            game.message = "Invalid command. Use w/a/s/d or arrows, ., i, 1-9, m or q.";
+            game.message = "Invalid command. Use w/a/s/d, h/j/k/l or arrows, ., i, 1-9, m or q.";
         }
     }
     return false;
+}
+
+/// The level-up screen: waits for 1, 2 or 3 and applies the perk. Uses no
+/// turn. The panic key hides it and comes back to it. Returns true when the
+/// whole game must close (Ctrl+C or the end of the input).
+fn perkScreen(in: *Io.Reader, out: *Io.Writer, game: *brewdungeon.Game) !bool {
+    while (true) {
+        try out.writeAll("\x1b[2J\x1b[H");
+        try game.renderPerks(out, true);
+        try out.flush();
+        const k = try readKey(in) orelse {
+            game.step(.quit);
+            return true;
+        };
+        if (k == ctrl_c) {
+            game.step(.quit);
+            return true;
+        }
+        if (k == brewdungeon.panic_key) {
+            if (try panicScreen(in, out)) {
+                game.step(.quit);
+                return true;
+            }
+            continue;
+        }
+        if (brewdungeon.perkKey(k)) |perk| {
+            game.choosePerk(perk);
+            playSfx(.buy);
+            return false;
+        }
+    }
 }
 
 /// Clears the screen and draws the title screen.
