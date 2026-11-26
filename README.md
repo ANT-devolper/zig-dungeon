@@ -42,7 +42,7 @@ zig build -Doptimize=ReleaseFast  # optimized build
 ./zig-out/bin/brewdungeon         # on Windows: .\zig-out\bin\brewdungeon.exe
 ```
 
-The game opens on a **title screen** with **Play** and **Quit**: `w`/`s` (or the Up/Down arrows) move the cursor and **Enter** confirms (or press `p` to play, `q` to quit). When a run ends, its last screen stays until you press a key, then the title comes back with your last result, so you can play again. To skip the title and start a run right away:
+The game opens on a **title screen** with **Play** and **Quit**: `w`/`s` (or `k`/`j`, or the Up/Down arrows) move the cursor and **Enter** confirms (or press `p` to play, `q` to quit). When a run ends, its last screen stays until you press a key, then the title comes back with your last result, so you can play again. To skip the title and start a run right away:
 
 ```sh
 zig build run -- --no-title
@@ -57,10 +57,10 @@ Press a key. It acts at once, with no need to press **Enter**:
 
 | Key | Action     |
 |-----|------------|
-| `w` or Up arrow    | move up    |
-| `s` or Down arrow  | move down  |
-| `a` or Left arrow  | move left  |
-| `d` or Right arrow | move right |
+| `w`, `k` or Up arrow    | move up    |
+| `s`, `j` or Down arrow  | move down  |
+| `a`, `h` or Left arrow  | move left  |
+| `d`, `l` or Right arrow | move right |
 | `.` | wait       |
 | `i` | open the inventory (does not use a turn; any key other than a number closes it) |
 | `1`-`9` | use the item with that number in the inventory (uses a turn), from the inventory or the map |

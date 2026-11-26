@@ -638,10 +638,10 @@ pub fn parseCommand(line: []const u8) ?Command {
     const t = std.mem.trim(u8, line, " \t\r\n");
     if (t.len == 0) return null;
     return switch (std.ascii.toLower(t[0])) {
-        'w' => .up,
-        's' => .down,
-        'a' => .left,
-        'd' => .right,
+        'w', 'k' => .up,
+        's', 'j' => .down,
+        'a', 'h' => .left,
+        'd', 'l' => .right,
         '.' => .wait,
         'q' => .quit,
         'i' => .inventory,
@@ -3087,12 +3087,12 @@ pub const Title = struct {
     selected: TitleChoice = .play,
 
     /// Handles one key. Returns the confirmed choice, if any: Enter confirms
-    /// the selected option, `p` and `q` pick one directly, `w`/`s` move
-    /// (the up and down arrows arrive as `w`/`s`, see `readKey`).
+    /// the selected option, `p` and `q` pick one directly, `w`/`s` (or vim's
+    /// `k`/`j`) move (the up and down arrows arrive as `w`/`s`, see `readKey`).
     pub fn key(t: *Title, k: u8) ?TitleChoice {
         switch (std.ascii.toLower(k)) {
-            'w' => t.selected = .play,
-            's' => t.selected = .quit,
+            'w', 'k' => t.selected = .play,
+            's', 'j' => t.selected = .quit,
             '\r' => return t.selected,
             'p' => return .play,
             'q' => return .quit,
@@ -3245,6 +3245,23 @@ test "parseCommand handles keys, uppercase and \\r" {
     try testing.expectEqual(Command.inventory, parseCommand("I\r").?);
     try testing.expectEqual(@as(?Command, null), parseCommand(""));
     try testing.expectEqual(@as(?Command, null), parseCommand("x"));
+}
+
+test "vim keys h j k l move like a s w d" {
+    try testing.expectEqual(Command.left, parseCommand("h").?);
+    try testing.expectEqual(Command.down, parseCommand("j").?);
+    try testing.expectEqual(Command.up, parseCommand("k").?);
+    try testing.expectEqual(Command.right, parseCommand("l").?);
+    try testing.expectEqual(Command.left, parseCommand("H\r").?);
+    try testing.expectEqual(Command.up, parseCommand("K").?);
+}
+
+test "vim keys j and k move the title cursor" {
+    var t: Title = .{};
+    try testing.expectEqual(@as(?TitleChoice, null), t.key('j'));
+    try testing.expectEqual(TitleChoice.quit, t.selected);
+    try testing.expectEqual(@as(?TitleChoice, null), t.key('k'));
+    try testing.expectEqual(TitleChoice.play, t.selected);
 }
 
 /// Reads every key from `bytes` with `readKey` until the end of the input.

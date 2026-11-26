@@ -29,5 +29,5 @@ src/term.zig    raw stdin mode (one key at a time, no echo, Ctrl+C as a key) for
 
 - **No allocations.** Fixed arrays only (`max_monsters`, fixed-size maze stack). Keep it that way unless a feature really needs dynamic memory.
 - **Randomness** goes through `Game.rng`. In tests, build the game with `testGame(&prng, layout)` and a fixed seed. Test layouts (`Layout`, `loadLayout`) are hand-drawn maps that can place `@`, `M`, `$`, `>` directly, so nothing in them is random. They exist only for tests.
-- Commands: `parseCommand` maps the first non-space char of a slice (case-insensitive, trims `\r`): `w/a/s/d` move, `.` wait, `i` inventory, `1`-`9` use item, `q` quit.
+- Commands: `parseCommand` maps the first non-space char of a slice (case-insensitive, trims `\r`): `w/a/s/d` or `k/h/j/l` move, `.` wait, `i` inventory, `1`-`9` use item, `q` quit.
 - Combat: moving into a monster attacks it for `attackDamage()` (`hero_damage` 2 + strength bonus); monsters have `monster_hp` 3 and bite for `monster_damage` 1. Walking onto gold gives `gold_value` 10.

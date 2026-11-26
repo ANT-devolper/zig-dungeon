@@ -2,6 +2,10 @@
 
 One entry per change, newest first. Format: `date` `hash` subject, then what changed (pages touched). The hash of the newest entry is filled in with the next commit.
 
+## 2026-11-26
+
+- `(this commit)` feat: add vim movement keys h j k l. `parseCommand` maps `h/j/k/l` to left/down/up/right next to WASD, and `Title.key` moves the cursor with `k`/`j`. README updated. ([input-terminal](features/input-terminal.md))
+
 ## 2026-11-19
 
 - `(this commit)` fix: let a rat act once per hero action while the hero is fast. With speed the rat took both of its actions at the end of the round (it stood still, then jumped 2 tiles or bit twice). New `halfRoundTurn` gives 2-action monsters one action after the hero's first action, and `monstersTurn(hidden, split)` gives them the other after the second; time stop skips both halves. ([rounds](features/rounds.md), [monsters](features/monsters.md))
