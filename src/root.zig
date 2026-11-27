@@ -456,6 +456,16 @@ pub const Rival = struct {
     /// Rounds left with the strength bonus, and the bonus.
     strength: u8 = 0,
     strength_bonus: i32 = 0,
+    /// Rounds left of its own time stop (the monsters and the hero lose
+    /// their turns), speed (two actions per round), vision (it sees the
+    /// hero anywhere) and invisibility (monsters ignore it, its first hit
+    /// is a sneak attack).
+    time_stop: u8 = 0,
+    speed: u8 = 0,
+    vision: u8 = 0,
+    invisible: u8 = 0,
+    /// A bad mystery potion: it loses its next turn.
+    lost_turn: bool = false,
     /// It decided to kill the hero (see `huntChance`).
     hunting: bool = false,
     /// It saw the hero last round, and the hero's HP when it last rolled.
@@ -1530,7 +1540,9 @@ pub const Game = struct {
         // quitting still works.
         const paralyzed = g.paralyzed and cmd != .quit;
         if (paralyzed) g.paralyzed = false;
-        var action = if (paralyzed) Command.wait else cmd;
+        // The rival's time stop freezes the hero too: the action is lost.
+        const frozen_by_rival = !paralyzed and cmd != .quit and g.rival.status == .here and g.rival.time_stop > 0;
+        var action = if (paralyzed or frozen_by_rival) Command.wait else cmd;
         // Confusion (a curse) inverts the move keys.
         if (g.confused > 0) action = action.reversed();
 
@@ -1540,7 +1552,12 @@ pub const Game = struct {
                 g.message = "You fled the dungeon.";
                 return;
             },
-            .wait => g.message = if (paralyzed) "You are paralyzed! You lose this turn." else "You wait...",
+            .wait => g.message = if (paralyzed)
+                "You are paralyzed! You lose this turn."
+            else if (frozen_by_rival)
+                "Time is frozen! Your rival moves on."
+            else
+                "You wait...",
             .inventory => unreachable, // handled above
             .use_1, .use_2, .use_3, .use_4, .use_5, .use_6, .use_7, .use_8, .use_9 => {
                 // Using nothing, or failing to drink, does not use a turn:
@@ -1705,8 +1722,10 @@ pub const Game = struct {
         // The rival races on off screen even while time is stopped here.
         if (g.rival.status == .away) g.rivalAwayRound();
         if (!frozen) {
-            if (g.rival.status == .here) g.rivalTurn(hidden);
+            if (g.rival.status == .here) g.rivalRound(hidden);
             if (g.state != .playing) return;
+            // The rival's own time stop freezes the monsters too.
+            if (g.rival.status == .here and g.rival.time_stop > 0) return;
             g.monstersTurn(hidden, split);
             if (slow and g.state == .playing) g.monstersTurn(hidden, false);
         }
@@ -1765,7 +1784,7 @@ pub const Game = struct {
 
     /// The hero can see the rival right now.
     pub fn rivalSeen(g: *const Game) bool {
-        if (g.rival.status != .here) return false;
+        if (g.rival.status != .here or g.rival.invisible > 0) return false;
         if (g.hasVision() or g.inRoom()) return true;
         const p = g.rival.pos;
         return g.visibility()[@intCast(p.y)][@intCast(p.x)];
@@ -1886,6 +1905,7 @@ pub const Game = struct {
         g.rival.status = .away;
         g.rival.hunting = false;
         g.rival.saw_hero = false;
+        g.rivalClearEffects();
         g.rival.rounds_left = rounds;
         g.rival.rounds_total = rounds;
     }
@@ -1931,9 +1951,10 @@ pub const Game = struct {
     fn rivalCrossedLevel(g: *Game) void {
         const r = &g.rival;
         _ = g.rollChest(&r.inventory);
+        // A rival that could die from the level's damage drinks first.
+        if (r.hp <= rival_away_damage_max) _ = g.rivalDrinkHealth();
         r.hp -= g.rng.intRangeAtMost(i32, rival_away_damage_min, rival_away_damage_max);
-        r.strength = 0;
-        r.strength_bonus = 0;
+        g.rivalClearEffects();
         if (r.hp <= 0) {
             r.hp = 0;
             r.status = .dead;
@@ -1945,29 +1966,110 @@ pub const Game = struct {
         r.hp = @min(r.max_hp, r.hp + 1);
     }
 
-    /// The rival drinks its largest health potion, if it has one.
-    fn rivalDrinkHealth(g: *Game) bool {
+    /// Ends every timed effect of the rival (a new level, the stairs).
+    fn rivalClearEffects(g: *Game) void {
         const r = &g.rival;
-        for ([_]Potion{ .large, .medium, .small }) |p| {
+        r.strength = 0;
+        r.strength_bonus = 0;
+        r.time_stop = 0;
+        r.speed = 0;
+        r.vision = 0;
+        r.invisible = 0;
+        r.lost_turn = false;
+    }
+
+    /// The effect of a potion on the rival (the caller took it out of the
+    /// inventory). Counters are set one above their length because the
+    /// round's tick is already done. A mystery potion is not handled here.
+    fn rivalApplyPotion(g: *Game, p: Potion) void {
+        const r = &g.rival;
+        switch (p) {
+            .small, .medium, .large => r.hp = @min(r.max_hp, r.hp + p.heal()),
+            .strength_small, .strength_medium, .strength_large => {
+                r.strength_bonus += p.strength();
+                r.strength = strength_turns + 1;
+            },
+            .time_stop => r.time_stop = time_stop_turns, // read after the tick
+            .speed => r.speed = speed_turns + 1,
+            .vision => r.vision = vision_turns + 1,
+            .invisibility => r.invisible = invisible_turns + 1,
+            .mystery => unreachable,
+        }
+    }
+
+    /// The rival drinks the first potion of `kinds` it carries. A health
+    /// potion is never wasted at full HP. Returns false if it drank none.
+    fn rivalDrinkOf(g: *Game, kinds: []const Potion, seen: bool) bool {
+        const r = &g.rival;
+        for (kinds) |p| {
             if (r.inventory.potionCount(p) == 0) continue;
+            if (p.heal() > 0 and r.hp >= r.max_hp) continue;
             r.inventory.remove(p);
-            r.hp = @min(r.max_hp, r.hp + p.heal());
+            if (p == .mystery) {
+                g.rivalDrinkMystery(seen);
+            } else {
+                g.rivalApplyPotion(p);
+                if (seen) g.rival_message = rivalDrinkMessage(p);
+            }
             return true;
         }
         return false;
     }
 
+    /// What the hero reads when it sees the rival drink `p`.
+    fn rivalDrinkMessage(p: Potion) []const u8 {
+        return switch (p) {
+            .small => "Your rival drinks a small health potion.",
+            .medium => "Your rival drinks a medium health potion.",
+            .large => "Your rival drinks a large health potion.",
+            .strength_small => "Your rival drinks a small strength potion.",
+            .strength_medium => "Your rival drinks a medium strength potion.",
+            .strength_large => "Your rival drinks a large strength potion.",
+            .time_stop => "Your rival stops time!",
+            .speed => "Your rival drinks a speed potion.",
+            .vision => "Your rival drinks a vision potion.",
+            .invisibility => "Your rival drinks an invisibility potion.",
+            .mystery => "Your rival drinks a strange potion.",
+        };
+    }
+
+    /// A mystery potion: a random chest potion or a lost turn, 50/50.
+    fn rivalDrinkMystery(g: *Game, seen: bool) void {
+        if (g.rng.uintLessThan(u8, 100) < mystery_good_chance) {
+            var p = g.randomPotion();
+            while (p == .mystery) p = g.randomPotion();
+            g.rivalApplyPotion(p);
+            if (seen) g.rival_message = rivalDrinkMessage(p);
+        } else {
+            g.rival.lost_turn = true;
+            if (seen) g.rival_message = "Your rival chokes on a bad potion.";
+        }
+    }
+
+    /// The rival drinks its largest health potion, if it has one.
+    fn rivalDrinkHealth(g: *Game) bool {
+        return g.rivalDrinkOf(&.{ .large, .medium, .small }, false);
+    }
+
     /// The rival drinks its largest strength potion, if it has one.
     fn rivalDrinkStrength(g: *Game) bool {
+        return g.rivalDrinkOf(&.{ .strength_large, .strength_medium, .strength_small }, false);
+    }
+
+    /// The most damage that can land on the rival in one round: monsters
+    /// next to it (unless it is invisible) and the hero if next to it.
+    fn rivalThreat(g: *const Game) i32 {
         const r = &g.rival;
-        for ([_]Potion{ .strength_large, .strength_medium, .strength_small }) |p| {
-            if (r.inventory.potionCount(p) == 0) continue;
-            r.inventory.remove(p);
-            r.strength_bonus += p.strength();
-            r.strength = strength_turns + 1; // this round's tick is already done
-            return true;
+        var threat: i32 = 0;
+        if (r.invisible == 0) {
+            for (g.monsters[0..g.monster_count]) |m| {
+                if (m.pos.manhattan(r.pos) != 1) continue;
+                const acts: i32 = @intCast(m.kind.actions());
+                threat += m.kind.damage() * acts;
+            }
         }
-        return false;
+        if (r.pos.manhattan(g.hero) == 1) threat += g.attackDamage();
+        return threat;
     }
 
     /// A tile the rival may step on: no wall, no monster, not the hero.
@@ -1979,8 +2081,22 @@ pub const Game = struct {
     /// the hero is not invisible.
     fn rivalSeesHero(g: *const Game, hidden: bool) bool {
         const p = g.rival.pos;
-        if (hidden or p.manhattan(g.hero) > rival_sight) return false;
+        if (hidden) return false;
+        if (g.rival.vision > 0) return true; // its vision potion: anywhere
+        if (p.manhattan(g.hero) > rival_sight) return false;
         return g.lineIsClear(p, g.hero) or g.lineIsClear(g.hero, p);
+    }
+
+    /// One round of the rival: its timed effects tick, then it acts once,
+    /// or twice while fast (speed potion).
+    fn rivalRound(g: *Game, hidden: bool) void {
+        const r = &g.rival;
+        inline for (.{ "strength", "time_stop", "speed", "vision", "invisible" }) |f| {
+            if (@field(r, f) > 0) @field(r, f) -= 1;
+        }
+        if (r.strength == 0) r.strength_bonus = 0;
+        g.rivalTurn(hidden);
+        if (r.speed > 0 and r.status == .here and g.state == .playing) g.rivalTurn(hidden);
     }
 
     /// One round of the rival on the hero's map. In order: drink a health
@@ -1990,11 +2106,11 @@ pub const Game = struct {
     /// hero; grab loot nearby; otherwise walk to the stairs.
     fn rivalTurn(g: *Game, hidden: bool) void {
         const r = &g.rival;
-        if (r.strength > 0) {
-            r.strength -= 1;
-            if (r.strength == 0) r.strength_bonus = 0;
-        }
         const seen = g.rivalSeen();
+        if (r.lost_turn) {
+            r.lost_turn = false;
+            return;
+        }
 
         // Hostility.
         if (g.rivalSeesHero(hidden)) {
@@ -2010,17 +2126,44 @@ pub const Game = struct {
         }
         if (r.hp <= rival_flee_hp) r.hunting = false;
 
-        if (r.hp <= rival_low_hp and g.rivalDrinkHealth()) {
-            if (seen) g.rival_message = "Your rival drinks a health potion.";
-            return;
+        // In danger (low HP, or the hits next to it could kill it): health
+        // first, then the escape potions, a mystery potion as a last resort.
+        const threat = g.rivalThreat();
+        if (r.hp <= rival_low_hp or (threat > 0 and r.hp <= threat)) {
+            if (g.rivalDrinkOf(&.{ .large, .medium, .small }, seen)) return;
+            if (threat > 0) {
+                const escapes = [_]Potion{ .time_stop, .invisibility, .speed, .mystery };
+                for (escapes) |p| {
+                    const active = switch (p) {
+                        .time_stop => r.time_stop > 0,
+                        .invisibility => r.invisible > 0,
+                        .speed => r.speed > 0,
+                        else => false,
+                    };
+                    if (!active and g.rivalDrinkOf(&.{p}, seen)) return;
+                }
+            }
         }
 
+        // Against the hero: strength before the stabbing, speed to close in,
+        // vision to find a weakened hero it cannot see.
         if (r.hunting and r.pos.manhattan(g.hero) == 1) {
-            const dmg = g.rivalDamage();
+            if (r.strength == 0 and g.hp > g.rivalDamage() and
+                g.rivalDrinkOf(&.{ .strength_large, .strength_medium, .strength_small }, seen)) return;
+        } else if (r.hunting) {
+            if (r.speed == 0 and g.rivalDrinkOf(&.{.speed}, seen)) return;
+        } else if (r.vision == 0 and !g.rivalSeesHero(hidden) and g.hp * 2 <= g.max_hp and
+            r.pos.manhattan(g.hero) <= rival_sight * 2 and g.rivalDrinkOf(&.{.vision}, seen)) return;
+
+        if (r.hunting and r.pos.manhattan(g.hero) == 1) {
+            // Invisible, its first hit is a sneak attack and gives it away.
+            const sneak = r.invisible > 0;
+            const dmg = g.rivalDamage() * @as(i32, if (sneak) sneak_multiplier else 1);
+            r.invisible = 0;
             g.hp -= dmg;
             g.damage_taken += dmg;
             r.bit = true;
-            g.message = "Your rival stabs you!";
+            g.message = if (sneak) "Your rival stabs you from the shadows!" else "Your rival stabs you!";
             if (g.hp <= 0) {
                 g.hp = 0;
                 g.state = .lost;
@@ -2032,10 +2175,8 @@ pub const Game = struct {
 
         for (directions) |d| {
             const i = g.monsterAt(r.pos.add(d)) orelse continue;
-            if (g.monsters[i].hp > g.rivalDamage() and g.rivalDrinkStrength()) {
-                if (seen) g.rival_message = "Your rival drinks a strength potion.";
-                return;
-            }
+            if (r.strength == 0 and g.monsters[i].hp > g.rivalDamage() and
+                g.rivalDrinkOf(&.{ .strength_large, .strength_medium, .strength_small }, seen)) return;
             g.rivalHitsMonster(i, seen);
             return;
         }
@@ -2109,6 +2250,7 @@ pub const Game = struct {
                 r.level = g.level + 1;
                 r.hunting = false;
                 r.saw_hero = false;
+                g.rivalClearEffects();
                 g.newRivalCounter();
                 if (seen) g.rival_message = "Your rival takes the stairs!";
             },
@@ -2309,7 +2451,7 @@ pub const Game = struct {
         // A rival on the map is a target too: the nearer one (the hero on
         // a tie, the rival when the hero is invisible). A thief carrying
         // gold still only runs from the hero.
-        if (g.rival.status == .here and !(m.kind == .thief and m.gold > 0)) {
+        if (g.rival.status == .here and g.rival.invisible == 0 and !(m.kind == .thief and m.gold > 0)) {
             const rival_dist = m.pos.manhattan(g.rival.pos);
             if (hidden or rival_dist < dist) return g.monsterVsRival(m, rival_dist);
         }
@@ -2507,9 +2649,9 @@ pub const Game = struct {
                     else
                         ansi_cyan;
                     break :blk '@';
-                } else if (g.rivalAt(p)) blk: {
+                } else if (g.rivalAt(p) and g.rival.invisible == 0) blk: {
                     // The rival: a magenta '@' (a user rule), white on red
-                    // when it just hit the hero.
+                    // when it just hit the hero. Not drawn while invisible.
                     color = if (g.rival.bit) ansi_bite else ansi_magenta;
                     break :blk '@';
                 } else if (g.isShopkeeper(p)) blk: {
@@ -6926,7 +7068,7 @@ test "monsters that kill the rival leave its remains, and the hero loots them" {
     g.monsters[0].hp = 20;
     g.rival.hp = 1;
     g.rival.inventory.gold = 20;
-    g.rival.inventory.add(.speed); // not a health potion: it would drink it
+    g.rival.inventory.add(.vision); // an escape potion would be drunk
     const spot = g.rival.pos;
     g.step(.wait);
     try testing.expectEqual(RivalStatus.dead, g.rival.status);
@@ -6939,7 +7081,7 @@ test "monsters that kill the rival leave its remains, and the hero loots them" {
     g.monster_count = 0;
     g.step(.down);
     try testing.expectEqual(@as(u32, 20), g.inventory.gold);
-    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.speed));
+    try testing.expectEqual(@as(u32, 1), g.inventory.potionCount(.vision));
     try testing.expectEqual(Tile.floor, g.tileAt(spot));
     var buf: [4096]u8 = undefined;
     const out = try renderToBuf(&g, &buf, .{});
@@ -6998,6 +7140,161 @@ test "attacking the rival makes it hunt the hero" {
     try testing.expect(g.rival.hunting);
     // It strikes back in the same round.
     try testing.expectEqual(@as(i32, start_max_hp - rival_damage), g.hp);
+}
+
+test "the rival drinks a health potion when the hero's hit could kill it" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.strength_bonus = 3; // the hero hits for 5
+    g.rival.hp = 5; // above rival_low_hp, but one hit from death
+    g.rival.inventory.add(.medium);
+    g.step(.wait);
+    try testing.expectEqual(@as(u32, 0), g.rival.inventory.potionCount(.medium));
+    try testing.expectEqual(@as(i32, 5 + Potion.medium.heal()), g.rival.hp);
+    try testing.expectEqualStrings("Your rival drinks a medium health potion.", g.rival_message);
+}
+
+test "the rival drinks a health potion before a level can kill it off screen" {
+    var seed: u64 = 0;
+    while (seed < 50) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, rival_duel_layout);
+        g.rival.status = .away;
+        g.rival.level = g.level + 1;
+        g.rival.hp = rival_away_damage_max; // the worst roll would kill it
+        g.rival.inventory.add(.medium);
+        g.rivalCrossedLevel();
+        try testing.expectEqual(RivalStatus.away, g.rival.status);
+        try testing.expect(g.rival.hp > 0);
+    }
+}
+
+test "the rival in danger drinks time stop: the hero and the monsters lose their turns" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.hp = 2;
+    g.rival.inventory.add(.time_stop);
+    g.step(.wait);
+    try testing.expectEqual(@as(u8, time_stop_turns), g.rival.time_stop);
+    try testing.expectEqualStrings("Your rival stops time!", g.rival_message);
+    // Three of the hero's actions are lost.
+    for (0..time_stop_turns) |_| {
+        g.step(.right);
+        try testing.expectEqualStrings("Time is frozen! Your rival moves on.", g.message);
+        try testing.expectEqual(@as(i32, 2), g.rival.hp);
+    }
+    // Then time runs again and the hero's hit lands.
+    g.step(.right);
+    try testing.expectEqual(RivalStatus.dead, g.rival.status);
+}
+
+test "the rival in danger drinks invisibility: monsters lose it and it is not drawn" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_fight_layout);
+    g.monsters[0].hp = 20;
+    g.rival.hp = 2;
+    g.rival.inventory.add(.invisibility);
+    g.step(.wait);
+    try testing.expect(g.rival.invisible > 0);
+    try testing.expectEqual(@as(i32, 2), g.rival.hp); // the monster did not bite
+    try testing.expect(!g.rivalSeen());
+}
+
+test "the rival in danger drinks speed and then acts twice per round" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_fight_layout);
+    g.monsters[0].hp = 20;
+    g.rival.hp = 2;
+    g.rival.inventory.add(.speed);
+    g.step(.wait);
+    try testing.expectEqual(@as(u32, 0), g.rival.inventory.potionCount(.speed));
+    try testing.expect(g.rival.speed > 0);
+
+    var prng2 = std.Random.DefaultPrng.init(1);
+    var c = testGame(&prng2, rival_corridor_layout);
+    c.rival.speed = 5;
+    const start = c.rival.pos.x;
+    c.step(.wait);
+    try testing.expectEqual(start + 2, c.rival.pos.x);
+}
+
+test "a hunting rival drinks strength before it stabs the hero" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.hunting = true;
+    g.rival.inventory.add(.strength_small);
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, 1), g.rival.strength_bonus);
+    try testing.expectEqual(@as(i32, start_max_hp), g.hp); // the drink took its turn
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp - rival_damage - 1), g.hp);
+}
+
+test "a rival with strength active does not drink another one" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_fight_layout);
+    g.monsters[0].hp = 20;
+    g.rival.strength = 3;
+    g.rival.strength_bonus = 1;
+    g.rival.inventory.add(.strength_small);
+    g.step(.wait);
+    try testing.expectEqual(@as(u32, 1), g.rival.inventory.potionCount(.strength_small));
+}
+
+test "the rival drinks vision to find a weakened hero behind a wall" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, &.{
+        "#########",
+        "#@#..A..#",
+        "#########",
+    });
+    g.hp = @divTrunc(g.max_hp, 2);
+    g.rival.inventory.add(.vision);
+    g.step(.wait);
+    try testing.expect(g.rival.vision > 0);
+    try testing.expectEqual(@as(u32, 0), g.rival.inventory.potionCount(.vision));
+}
+
+test "an invisible rival's stab is a sneak attack and shows it again" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.hunting = true;
+    g.rival.invisible = 3;
+    g.step(.wait);
+    try testing.expectEqual(@as(i32, start_max_hp - rival_damage * sneak_multiplier), g.hp);
+    try testing.expectEqual(@as(u8, 0), g.rival.invisible);
+    try testing.expectEqualStrings("Your rival stabs you from the shadows!", g.message);
+}
+
+test "a mystery potion either helps the rival or costs it a turn" {
+    var lost: usize = 0;
+    var helped: usize = 0;
+    var seed: u64 = 0;
+    while (seed < 200) : (seed += 1) {
+        var prng = std.Random.DefaultPrng.init(seed);
+        var g = testGame(&prng, rival_duel_layout);
+        g.rival.hp = 2;
+        g.rival.inventory.add(.mystery);
+        g.step(.wait);
+        try testing.expectEqual(@as(u32, 0), g.rival.inventory.potionCount(.mystery));
+        if (g.rival.lost_turn) lost += 1 else helped += 1;
+    }
+    try testing.expect(lost > 0 and helped > 0);
+}
+
+test "the rival's potion effects end when it leaves the level" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var g = testGame(&prng, rival_duel_layout);
+    g.rival.status = .away;
+    g.rival.level = g.level + 1;
+    g.rival.time_stop = 2;
+    g.rival.speed = 2;
+    g.rival.vision = 2;
+    g.rival.invisible = 2;
+    g.rival.lost_turn = true;
+    g.rivalCrossedLevel();
+    try testing.expectEqual(@as(u8, 0), g.rival.time_stop + g.rival.speed + g.rival.vision + g.rival.invisible);
+    try testing.expect(!g.rival.lost_turn);
 }
 
 test "killing the rival gives its loot and it never comes back" {

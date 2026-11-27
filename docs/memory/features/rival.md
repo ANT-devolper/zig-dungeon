@@ -33,7 +33,7 @@ The numbers are my picks.
 
 - **Ahead = frozen** (user rule, 2026-11-19): while `rival.level > g.level`, `rivalAwayRound` returns at once. The counter does not tick, it takes no damage, and it never crosses another level, so the lead is at most 1 level. A rival that reaches `g.level + 1` (by the stairs on the hero's map, or off screen) has a fresh counter, so on the hero's arrival its progress is 0% and `placeRivalAhead(0)` puts it near the start: the free tile nearest to the hero by walking, at least `monster_safe_distance` away. Only a rival that is behind (or on the level of the hero's shop or fountain room) races on.
 - Behind, `rounds_left` counts down. When it ends, `level += 1` and `rivalCrossedLevel` runs, in this order:
-  1. one chest roll (`rollChest(&rival.inventory)`)
+  1. one chest roll (`rollChest(&rival.inventory)`), then a health potion first if its HP <= `rival_away_damage_max`
   2. 1-3 damage (`rival_away_damage_*`); at 0 HP it becomes `dead`, its loot is lost and the hero sees "A distant scream echoes... your rival is gone."
   3. a health potion if its HP is at or below 4
   4. +1 HP of rest
@@ -50,7 +50,7 @@ The numbers are my picks.
      - the chance is `5 + (100 - hero HP %) * rival HP % / 100`, capped at 90
      - it is 0 when the rival's HP is at or below `rival_flee_hp` (3)
    - Out of sight (or with the hero invisible), it stops hunting. At 3 HP or less it never hunts.
-3. If its HP is at or below `rival_low_hp` (4) and it has a health potion, it drinks the largest one.
+3. Potions: see "Potions" below (danger, then strength/speed/vision against the hero). A lost turn (bad mystery potion) skips the whole turn.
 4. If it is hunting and next to the hero, it hits for `rival_damage` (2) + its strength. The hero's `damage_taken` drives the flash and shake, the rival is drawn white on red, and the message is "Your rival stabs you!". If the hero dies: "Your rival killed you. GAME OVER."
 5. If a monster is next to it, it attacks it (`rivalHitsMonster`). It drinks its largest strength potion first if the monster would survive the hit. A kill:
    - gives the rival a thief's gold
@@ -61,6 +61,20 @@ The numbers are my picks.
 8. Otherwise it walks toward the stairs. `rivalStepToward` walks the BFS (`distanceMap(goal)`) and picks up gold or chests it walks over. On the stairs it becomes `away` on `level + 1` with a new counter (it is now ahead).
 
 When the hero sees it, messages go to `rival_message`: grabs the gold, opens a chest, drinks a potion, fights or slays a monster, takes the stairs.
+
+## Potions (user rule, 2026-11-27: it uses all of them, against monsters or the hero)
+
+`rivalRound` (in `endRound`) ticks `strength`, `time_stop`, `speed`, `vision` and `invisible`, runs `rivalTurn`, and runs it again while `speed > 0`. `rivalDrinkOf(kinds, seen)` drinks the first kind it carries (health is never wasted at full HP) and `rivalApplyPotion` applies it. A drink uses its turn. Counters are set to their length + 1 (the tick is already done), except time stop (its length, read after the tick). `rivalClearEffects` ends them all on a new level, the stairs and `rivalLeftBehind`.
+
+- **Danger** = HP <= `rival_low_hp`, or `rivalThreat()` (damage x actions of monsters next to it, none while it is invisible, plus the hero's `attackDamage` if next to it) >= its HP. In danger, in order: health (largest first); then, only if something threatens it, time stop, invisibility, speed, mystery (last resort), skipping an effect already active.
+- **Time stop:** monsters skip their turn (`endRound`) and the hero's actions become waits, "Time is frozen! Your rival moves on." (`step`, `frozen_by_rival`); quit still works. The hero's own time stop still freezes the rival.
+- **Invisibility:** monsters ignore it (`monsterAct`), it is not drawn and `rivalSeen` is false; its stab is a sneak attack (x`sneak_multiplier`, "Your rival stabs you from the shadows!") and ends it. Bumping into it still attacks it.
+- **Speed:** two rival actions per round. **Vision:** `rivalSeesHero` is true at any distance through walls (not for an invisible hero).
+- **Strength:** before stabbing the hero when hunting and next to it (and the hero survives the hit), or before a monster it cannot kill in one hit; never while a strength bonus is active.
+- **Vision (offensive):** when the hero is at half HP or less, within 2 x `rival_sight` and not seen, it drinks vision to find them.
+- **Speed (offensive):** when hunting and not yet next to the hero.
+- **Mystery:** `rivalDrinkMystery`: `mystery_good_chance` a random non-mystery potion, otherwise `lost_turn` ("Your rival chokes on a bad potion.").
+- **Off screen** (`rivalCrossedLevel`): if its HP <= `rival_away_damage_max` it drinks health before taking the level's damage. Only health is drunk off screen.
 
 ## Fights with the hero and the monsters
 

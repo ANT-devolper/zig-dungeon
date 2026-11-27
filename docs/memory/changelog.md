@@ -2,9 +2,13 @@
 
 One entry per change, newest first. Format: `date` `hash` subject, then what changed (pages touched). The hash of the newest entry is filled in with the next commit.
 
+## 2026-11-27
+
+- `(this commit)` feat: let the rival drink all its potions. It died with potions in its bag: it only drank health at HP <= 4, off screen it took the level's damage before drinking, and strength was its only other potion. Now `rivalThreat` sums the hits that can land on it and, in danger, it drinks health, then time stop, invisibility, speed or a mystery potion; strength before fighting the hero or a monster (not twice), vision to find a weakened hero. New `Rival` counters (`time_stop`, `speed`, `vision`, `invisible`, `lost_turn`), `rivalRound` (ticks and double turn while fast), `rivalApplyPotion`, `rivalDrinkOf`, `rivalClearEffects`; the rival's time stop makes the hero's actions waits and freezes the monsters; an invisible rival is ignored by monsters, not drawn, and its stab is a sneak attack. `rivalCrossedLevel` drinks health first when the level could kill it. ([rival](features/rival.md))
+
 ## 2026-11-26
 
-- `(this commit)` feat: keep a top 10 of runs next to the game. `Scores` (`add`, `parse`, `write`) keeps the best 10 runs by level, then gold, in `scores.txt` in the executable's folder; `main.zig` loads it at startup and saves after every run (`recordRun`). The title lists "Best runs" (the last run marked with `<`), and the end of a run says "New record!" or "Rank N in the top 10." (`writeRecord`). `Title.render` takes the scores and the last rank. ([scores](features/scores.md), [input-terminal](features/input-terminal.md))
+- `ba77c4e` feat: keep a top 10 of runs next to the game. `Scores` (`add`, `parse`, `write`) keeps the best 10 runs by level, then gold, in `scores.txt` in the executable's folder; `main.zig` loads it at startup and saves after every run (`recordRun`). The title lists "Best runs" (the last run marked with `<`), and the end of a run says "New record!" or "Rank N in the top 10." (`writeRecord`). `Title.render` takes the scores and the last rank. ([scores](features/scores.md), [input-terminal](features/input-terminal.md))
 - `4c8060e` feat: offer a perk every 3 levels. On arriving at level 4, 7, 10... a level-up screen offers +3 max HP, +1 permanent damage or a full heal (keys 1/2/3, no turn used). New `Perk`, `choosePerk`, `renderPerks`, `Game.damage_bonus`/`perk_pending`/`perk_taken`; `attackDamage` includes the bonus; the inventory shows "Attack damage"; the help line says `[wasd/hjkl]`. ([perks](features/perks.md))
 - `c6fe996` feat: add vim movement keys h j k l. `parseCommand` maps `h/j/k/l` to left/down/up/right next to WASD, and `Title.key` moves the cursor with `k`/`j`. README updated. ([input-terminal](features/input-terminal.md))
 
